@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+*.suo
+*.user
+*.DS_Store
+Thumbs.db
+build/
