@@ -1,0 +1,106 @@
+%%tana%%
+- Okai BMS Display — Project Summary #project
+  - Status:: Active — firmware v0.2.0 running, ready for first flash
+  - Date:: 2026-05-17
+  - Repo:: https://github.com/monterman/Okai-BMS-Display
+  - Hardware:: LILYGO T-Display-S3 (ESP32-S3, 320×170 IPS TFT) + up to 8× Ruipu/Okai 10S4P packs
+  - Firmware version:: v0.2.0
+  - What this is:: A custom BMS monitor display built on LILYGO T-Display-S3. Reads 4 Ruipu/Okai packs simultaneously over UART (9600 baud, 36-byte frame), displays live pack health on a 4-screen TFT UI, logs ride and charge sessions to flash (CSV), and serves a live web dashboard over WiFi AP.
+  - ## Screens #section
+    - Screen 0 — Fleet Overview
+      - 2×2 grid, one cell per pack
+      - Shows:: SOC % (large), Voltage V, Current A (signed), Instant Power W, Available Wh (vs 460.8 Wh NCR18650BD reference), Cell delta mV, Max temp °C
+      - Cell border color:: Green / Amber / Red based on cell delta (warn ≥50 mV, poor ≥100 mV)
+      - BTN1:: WiFi toggle (AP on/off)
+      - BTN3 long-press (800 ms):: opens label picker for Pack 1
+    - Screen 1 — Per-Pack Detail
+      - Cycles through P1–P4 with BTN1 short press
+      - Shows:: SOC giant (textSize 4), Instant W, Available Wh, Voltage, Current, Cell delta mV, Max temp, Cycle count, SoH % (heuristic vs new NCR18650BD)
+      - SoH formula:: 100 − clamp(delta_mV × 0.3 + cycles × 0.02, 0, 30)
+      - Pack selector dots at top
+    - Screen 2 — Charging Live
+      - Activates automatically when any pack's charger pin is detected
+      - Shows per pack:: Animated SOC fill bar (animated 1 px leading edge blinks 2 Hz), SOC %, ETA to full in minutes
+      - ETA formula:: ((100 − soc) / 100) × 12.8 Ah / currentA × 60 minutes
+      - Total current in (A), packs done count
+      - Alert:: White border flash ×3 when any pack transitions to DONE (SOC 100 + charger still plugged)
+      - If no charger:: shows "No charger" centered
+    - Screen 3 — Cell Health Table
+      - Tabular view: Pack | Delta mV | Cycles | SoH % | Status (GOOD/WARN/POOR)
+      - Worst pack called out at bottom with "replace within N cycles" heuristic
+      - Note — Per-cell voltage NOT available via UART (BQ7693003 lives on internal I2C, not exposed)
+  - ## Button Layout #section
+    - BTN1 (GPIO0):: WiFi toggle on Screen 0 | cycle pack on Screen 1 | confirm in overlays
+    - BTN2 (GPIO14):: Next screen →
+    - BTN3 (GPIO2):: Prev screen ← | long-press on Screen 0 = label picker | cancel in overlays
+    - Page indicator:: 4 dots bottom-center, filled = current screen
+  - ## Logging System #section
+    - Mode — IDLE:: No logging. Default state.
+    - Mode — RIDE (R_ files):: Triggered when any pack current < −1.0 A. Logs every 5 s. Stays open 2 min after discharge stops (hysteresis). Files named R_20260517_042_1.csv
+    - Mode — CHARGE (C_ files):: Triggered when any pack chargerDetected flag is set. Logs every 30 s. Closes immediately when charger removed. Files named C_20260517_001_1.csv
+    - File cap:: 256 KB per file, then rolls to next segment (_1, _2, _3…)
+    - CSV columns:: Timestamp, UpSec, Label, Port, SOC, Voltage_V, Current_A, Power_W, CellHigh_V, CellLow_V, Delta_mV, MaxTemp_C, Cycles
+    - Without time sync:: filenames use R_S042_1.csv format instead of date
+    - Log header includes:: firmware version, mode, start timestamp, RTC sync status, pack labels and cycle counts at session start
+  - ## Pack Labeling #section
+    - Labels:: 1–8 (user-assigned). Default display is P1–P4 (port number).
+    - Assigned via:: BTN3 long-press on Screen 0, or disconnect modal when a pack is unplugged
+    - Disconnect overlay:: appears after 30 s of no data from a port — prompts to reassign label or dismiss
+    - Stored in:: /labels.bin on LittleFS — survives power cycles
+    - Session counters (ride #, charge #) stored in:: /sessions.bin
+  - ## Time / RTC #section
+    - DS3231 hardware (optional):: wired permanently to GPIO11 (SDA) / GPIO12 (SCL) with CR2032 coin cell. Set once ever, keeps time across power cycles. Enable via #define USE_DS3231 in PackLabel.ino.
+    - Software fallback (default, no hardware needed):: Browser JS auto-calls /settime?t=Date.now() on every dashboard page load. Offset stored in /timesync.bin. Drift ~10 s/day — acceptable for log filenames.
+    - First use:: Flash firmware → connect to OkaiBMS WiFi → open http://192.168.4.1 → time syncs automatically. No manual action needed per session.
+  - ## WiFi Web Dashboard #section
+    - SSID:: OkaiBMS | Password:: 12345678 | IP:: 192.168.4.1
+    - Routes::
+      - / — live pack table (auto-refresh 5 s) + log file list with size, download, delete
+      - /csv?f=/NAME.csv — download log file
+      - /delete?f=/NAME.csv — delete file (path traversal protected)
+      - /clearall — wipe all CSV logs
+      - /settime?t=N — set time from browser epoch ms (called automatically by JS)
+      - /rawdump — live hex dump of all 36-byte BMS frames (refreshes every 3 s)
+    - Dashboard shows:: Uptime, IP, RTC time or "NOT SET", current log mode (RIDE/CHARGE/IDLE), pack table with all health metrics, session Wh in/out per pack, storage used/total
+  - ## Energy Tracking #section
+    - Instant power:: Voltage × Current → W (signed, + = charging, − = discharging)
+    - Available Wh:: (SOC / 100) × 460.8 Wh (NCR18650BD 10S4P design capacity)
+    - Session Wh in / out:: Euler-integrated per update interval, accumulated from power-on
+    - Design reference:: Panasonic NCR18650BD — 3.2 Ah × 4P = 12.8 Ah, 10S × 3.6 V nominal = 36 V → 460.8 Wh
+    - SoH comparison baseline:: brand-new NCR18650BD pack at 100% SOC, 0 cycles, 0 mV delta
+  - ## Pack UID — Status and Next Steps #section
+    - Frame structure:: 36 bytes, 9600 baud, one direction (pack → ESP32)
+    - Only confirmed command:: 0x3A 0x13 0x01 0x16 0x79 (keep-alive, 5 bytes)
+    - Decoded bytes (18 of 36):: SOC, voltage, current, cell high/low, temp, cycles, charger state, status flags
+    - Unaccounted bytes (18 of 36):: bytes 0, 1, 2, 4, 6, 14–20, 23, 24, 27, 28, 33, 34 — candidates for serial/UID
+    - Plan — UID hunt::
+      - Connect each physical pack one at a time to port 1
+      - Capture raw /rawdump output (or FTDI terminal at 9600 baud on pack TX wire) for each pack
+      - Upload all 4 captures for byte-by-byte comparison
+      - Bytes that differ between packs but stay constant across reboots = UID candidates
+      - FTDI tip: connect FTDI RX directly to pack TX wire (not through ESP32) for clean capture
+    - Future data fields that may be hidden in unknown bytes::
+      - Pack serial number / UID
+      - Total lifetime charge cycles (vs session cycles)
+      - Manufacturing date
+      - BMS firmware version
+      - Cell-level balance flags
+      - Historical fault codes
+  - ## Firmware Modules #section
+    - Okai_BMS_Display.ino:: Main sketch — setup() + loop(), boot order
+    - Config.h:: All constants, pin defs, LogMode typedef, PackData struct, forward declarations
+    - Heartbeat.ino:: Non-blocking LED blink on GPIO38 (1 Hz idle, 4 Hz WiFi active)
+    - UART.ino:: 4× hardware UART readers (9600 baud), keeps packs[] array fresh, Wh accumulation
+    - Display.ino:: 4-screen state machine, button routing, overlays, page dots
+    - Logger.ino:: Two-stream smart logging to LittleFS, mode detection, segment rollover
+    - PackLabel.ino:: Labels 1–8, time sync (DS3231 + software fallback), filename builder, session counters
+    - WiFiServer.ino:: AP + WebServer, all routes, dashboard HTML
+  - ## Outstanding / Next Sessions #section
+    - Flash firmware and do first hardware test
+    - Open dashboard → verify time syncs (check "RTC: YYYY-MM-DD..." in header)
+    - Test all 4 screens and button nav
+    - Plug in charger → confirm Screen 2 activates, fill bars animate, ETA counts
+    - Assign pack labels 1–8 via BTN3 long-press or disconnect overlay
+    - UID hunt — capture 4 packs via /rawdump, upload serial logs for decode
+    - If UID found → update UART.ino to expose it, add to CSV log, display on Screen 1
+    - If more data fields found → decode and surface in display + log
