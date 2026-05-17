@@ -59,7 +59,13 @@ BMS Pack 4 TX ── GPIO 18  (SoftSerial RX)
 
 ## External Waterproof Buttons
 
-Three momentary pushbutton switches (e.g. AliExpress illuminated 16mm switches) mounted on the enclosure.
+Three momentary pushbutton switches (illuminated 8 mm momentary push-buttons) mounted on the enclosure.
+
+**Reference photo:** `docs/switch-led-momentary.avif`
+
+**Wiring diagram:** `docs/Switch_Wiring.svg` / `docs/Switch_Wiring.png`
+
+![Switch Wiring](Switch_Wiring.png)
 
 ### Extending the onboard buttons
 
