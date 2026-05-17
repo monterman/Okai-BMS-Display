@@ -1,75 +1,58 @@
 #pragma once
 
 // ─── Firmware version ────────────────────────────────────────────────────────
-#define FW_VERSION "0.1.0"
+#define FW_VERSION "0.2.0"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4
 
 // ─── UART / SoftSerial pin assignments ───────────────────────────────────────
-// T-Display-S3 free GPIOs: 1, 2, 16, 17, 18, 21
-// Display parallel bus occupies: 5,6,7,8,9,38,39,40,41,42,45,46,47,48
-// Avoid: 0(BOOT), 3,4(ADC/strapping), 10-13(PSRAM/Flash), 14(BTN2), 15(PWR_EN),
-//        43(TX0), 44(RX0)
+// T-Display-S3 free GPIOs: 1, 2, 10, 11, 12, 13, 16, 17, 18, 21
+// Display parallel bus:    5,6,7,8,9,39,40,41,42,45,46,47,48
+// Avoid: 0(BOOT), 3,4(ADC), 35-37(PSRAM), 43(TX0), 44(RX0)
 
-// UART1 — Pack 1 (hardware)
 #define PACK1_RX_PIN   1
 #define PACK1_TX_PIN   2   // shared TX bus — wire to ALL pack RX lines
-
-// UART2 — Pack 2 (hardware)
 #define PACK2_RX_PIN  16
-#define PACK2_TX_PIN  PACK1_TX_PIN   // same shared TX
-
-// EspSoftwareSerial — Pack 3
+#define PACK2_TX_PIN  PACK1_TX_PIN
 #define PACK3_RX_PIN  17
-#define PACK3_TX_PIN  PACK1_TX_PIN   // same shared TX
-
-// EspSoftwareSerial — Pack 4
+#define PACK3_TX_PIN  PACK1_TX_PIN
 #define PACK4_RX_PIN  18
-#define PACK4_TX_PIN  PACK1_TX_PIN   // same shared TX
-
-// Shared heartbeat TX — one ESP32 pin drives all 4 pack RX lines in parallel
+#define PACK4_TX_PIN  PACK1_TX_PIN
 #define HEARTBEAT_TX_PIN  PACK1_TX_PIN
+
+// ─── RTC (DS3231) ────────────────────────────────────────────────────────────
+// Connect DS3231 module: VCC→3V3, GND→GND, SDA→GPIO11, SCL→GPIO12
+// Library: "RTClib" by Adafruit — install via Library Manager
+#define RTC_SDA_PIN  11
+#define RTC_SCL_PIN  12
 
 // ─── UART baud ───────────────────────────────────────────────────────────────
 #define BMS_BAUD 9600
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────────
-// Handled by RuipuBattery::unlock() — call every 5s per pack, non-blocking
 #define HEARTBEAT_INTERVAL_MS 5000UL
 
-// ─── Logging ─────────────────────────────────────────────────────────────────
-#define LOG_INTERVAL_MS  10000UL
-#define LOG_FILENAME     "/bms_log.csv"
-#define LOG_CSV_HEADER   "Timestamp,PackID,SOC,Voltage,Current,CellHigh,CellLow,MaxTemp\n"
+// ─── Smart logging ───────────────────────────────────────────────────────────
+// Two streams: R_YYYYMMDD_NNN_S.csv (ride) and C_YYYYMMDD_NNN_S.csv (charge)
+// NNN = session counter (000-999, wraps), S = segment within session (1,2,3…)
+// Falls back to R_SXXX_S.csv / C_SXXX_S.csv when RTC has no time set
+#define LOG_RIDE_INTERVAL_MS    5000UL    // 5 s while riding
+#define LOG_CHARGE_INTERVAL_MS  30000UL   // 30 s while charging
+#define LOG_RIDE_THRESHOLD_A    1.0f      // A discharge → "riding"
+#define LOG_RIDE_HYSTERESIS_MS  120000UL  // keep RIDE open 2 min after current drops
+#define LOG_MAX_FILE_BYTES      262144UL  // 256 KB per segment → roll to _2, _3…
 
-// ─── Cell health thresholds (Volts — high() and low() return float V) ────────
-// Panasonic 18650 10S packs ~10 years old; delta flags imbalance/cell degradation
-#define CELL_DELTA_WARN_V  0.050f   // 50 mV — watch
-#define CELL_DELTA_POOR_V  0.100f   // 100 mV — flag POOR
+// ─── Pack labels ─────────────────────────────────────────────────────────────
+// Labels 1-8; 0 = unassigned (shows as P1/P2/P3/P4 in filenames)
+#define NUM_LABELS 8
+
+// ─── Cell health thresholds ──────────────────────────────────────────────────
+#define CELL_DELTA_WARN_V  0.050f   // 50 mV
+#define CELL_DELTA_POOR_V  0.100f   // 100 mV
 
 // ─── Display ─────────────────────────────────────────────────────────────────
-#define TFT_BG_COLOR    TFT_BLACK
-#define TFT_GOOD_COLOR  TFT_GREEN
-#define TFT_WARN_COLOR  TFT_YELLOW
-#define TFT_POOR_COLOR  TFT_RED
-#define TFT_BL_PIN      38          // backlight enable (HIGH = on)
-
-// ─── Buttons ─────────────────────────────────────────────────────────────────
-// All three buttons are active-LOW (press pulls GPIO to GND, use INPUT_PULLUP).
-// Button 1 + 2: solder wires from onboard PCB button pads to external
-//               waterproof momentary switches mounted on enclosure.
-// Button 3: solder wire from GPIO 21 header pin to third external switch.
-// Switch LEDs: wire always-on — LED+ → 150Ω → 5V rail, LED− → GND. No GPIO needed.
-#define BUTTON1_PIN      0          // WiFi AP toggle (onboard boot btn → external)
-#define BUTTON2_PIN     14          // User action   (onboard btn2   → external)
-#define BUTTON3_PIN     21          // User action   (GPIO 21 header → external)
-
-// ─── WiFi AP ─────────────────────────────────────────────────────────────────
-#define WIFI_AP_SSID     "OkaiBMS"
-#define WIFI_AP_PASSWORD "12345678"
-
-// ─── Display refresh ─────────────────────────────────────────────────────────
+#define TFT_BL_PIN      38
 #define DISPLAY_REFRESH_MS  500UL
 
 // ─── TFT parallel bus (T-Display-S3 ST7789 8-bit) ────────────────────────────
@@ -87,34 +70,54 @@
 #define TFT_D6  47
 #define TFT_D7  48
 
-// ─── Pack energy design specs (Panasonic NCR18650BD in 10S4P config) ─────────
-// Cell:  3.6 V nominal, 3.2 Ah rated → 11.52 Wh per cell
-// Pack:  10S × 3.6 V = 36 V nominal;  4P × 3.2 Ah = 12.8 Ah → 460.8 Wh
-// Used for: ETA, available-energy display, SoH % vs brand-new
-#define PACK_DESIGN_AH   12.8f    // brand-new pack rated Ah
-#define PACK_NOMINAL_V   36.0f    // nominal pack voltage (10S × 3.6 V)
+// ─── Buttons ─────────────────────────────────────────────────────────────────
+#define BUTTON1_PIN      0   // BTN1: WiFi toggle / confirm action
+#define BUTTON2_PIN     14   // BTN2: next screen →
+#define BUTTON3_PIN     21   // BTN3: prev screen ←  (long-press = label assign)
+
+// ─── WiFi AP ─────────────────────────────────────────────────────────────────
+#define WIFI_AP_SSID     "OkaiBMS"
+#define WIFI_AP_PASSWORD "12345678"
+
+// ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
+#define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated
+#define PACK_NOMINAL_V   36.0f    // 10S × 3.6 V nominal
 #define PACK_DESIGN_WH   460.8f   // PACK_DESIGN_AH × PACK_NOMINAL_V
 
-// ─── Per-pack data (updated by uartLoop, read by display/logger/wifi) ─────────
+// ─── Log mode (shared between Logger.ino and Display.ino) ────────────────────
+typedef enum : uint8_t { LOG_IDLE = 0, LOG_RIDE = 1, LOG_CHARGE = 2 } LogMode;
+
+// ─── Per-pack data ───────────────────────────────────────────────────────────
 struct PackData {
-    float    voltage;         // V  total pack
-    float    current;         // A  + = charging, − = discharging
-    float    cellHigh;        // V  highest cell
-    float    cellLow;         // V  lowest cell
-    uint8_t  soc;             // 0-100 %
-    uint8_t  maxTemp;         // °C
-    uint16_t cycles;          // charge cycle count
-    uint8_t  rawStatus;       // BMS status byte (byte 3)
-    bool     chargerDetected; // charger is plugged in
-    bool     isCharging;      // bulk-charging actively
-    bool     chargeDone;      // charger plugged + 100% + not bulk
-    float    whIn;            // Wh accumulated charging  (session, since boot)
-    float    whOut;           // Wh accumulated discharging (session, since boot)
-    bool     valid;           // true after first good frame
-    uint32_t lastUpdateMs;    // millis() of last successful read
+    float    voltage;
+    float    current;
+    float    cellHigh;
+    float    cellLow;
+    uint8_t  soc;
+    uint8_t  maxTemp;
+    uint16_t cycles;
+    uint8_t  rawStatus;
+    bool     chargerDetected;
+    bool     isCharging;
+    bool     chargeDone;
+    float    whIn;           // session Wh accumulated (charging)
+    float    whOut;          // session Wh accumulated (discharging)
+    bool     valid;
+    uint32_t lastUpdateMs;
 };
 
-// ─── Cross-file globals (defined in their respective .ino files) ──────────────
+// ─── Cross-file globals ───────────────────────────────────────────────────────
 extern PackData packs[NUM_PACKS];   // UART.ino
 extern bool     wifiActive;          // WiFiServer.ino
 extern bool     fsReady;             // Logger.ino
+
+// ─── Cross-file function prototypes (PackLabel.ino) ──────────────────────────
+// needed by Logger.ino and Display.ino which compile before PackLabel.ino
+void     packlabelInit();
+uint8_t  labelGet(uint8_t port);
+void     labelSet(uint8_t port, uint8_t label);
+void     labelStr(uint8_t port, char *buf, size_t len);
+bool     timeIsSynced();
+time_t   timeNowSec();
+void     timeSyncSet(int64_t browserEpochMs);
+LogMode  logCurrentMode();           // Logger.ino — prototype for Display.ino

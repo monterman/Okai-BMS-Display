@@ -46,10 +46,25 @@ static bool     _prevChargeDone[NUM_PACKS];
 // ── Button debounce ───────────────────────────────────────────────────────────
 static bool     _b1Prev, _b2Prev, _b3Prev;
 static uint32_t _b1Ts, _b2Ts, _b3Ts;
-#define DEBOUNCE_MS 50UL
+#define DEBOUNCE_MS   50UL
+#define LONGPRESS_MS 800UL   // hold BTN3 to enter label assign
 
 // ── Refresh timing ────────────────────────────────────────────────────────────
 static uint32_t _dispLast;
+
+// ── Pack disconnect tracking ──────────────────────────────────────────────────
+#define DISCONNECT_DEBOUNCE_MS 30000UL
+static uint32_t _portLostMs[NUM_PACKS];
+static bool     _portWasValid[NUM_PACKS];
+
+// ── Overlay state ─────────────────────────────────────────────────────────────
+// Only one overlay active at a time: disconnect modal OR label picker
+static bool    _showDisconnect = false;
+static uint8_t _disconnectPort = 0;
+
+static bool    _showLabelPick  = false;
+static uint8_t _labelPickPort  = 0;
+static uint8_t _labelPickVal   = 0;   // 0=unassigned, 1-8=label
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static uint16_t healthColor(uint8_t i) {
@@ -80,6 +95,65 @@ static void drawPageDots() {
     }
 }
 
+// ── Overlay: disconnect modal ─────────────────────────────────────────────────
+static void drawDisconnectModal() {
+    uint8_t port = _disconnectPort;
+    char lbl[6]; labelStr(port, lbl, sizeof(lbl));
+
+    _gfx->fillRect(8, 44, 304, 90, C_HDR);
+    _gfx->drawRect(8, 44, 304, 90, C_WARN);
+    _gfx->drawRect(9, 45, 302, 88, C_WARN);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_WARN);
+    _gfx->setCursor(18, 56);
+    char line[40];
+    snprintf(line, sizeof(line), "Port %u (pack L%s) disconnected", port+1, lbl);
+    _gfx->print(line);
+
+    _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(18, 70);
+    _gfx->print("Inserting a different pack?");
+
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(18, 86);
+    _gfx->print("BTN1: Yes \x7e assign new label");
+
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(18, 100);
+    _gfx->print("BTN2/BTN3: Dismiss");
+}
+
+// ── Overlay: label picker ─────────────────────────────────────────────────────
+static void drawLabelPicker() {
+    _gfx->fillRect(20, 54, 280, 72, C_HDR);
+    _gfx->drawRect(20, 54, 280, 72, C_ACCENT);
+    _gfx->drawRect(21, 55, 278, 70, C_ACCENT);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_ACCENT);
+    _gfx->setCursor(30, 66);
+    char title[36];
+    snprintf(title, sizeof(title), "Port %u \x7e assign pack label:", _labelPickPort+1);
+    _gfx->print(title);
+
+    // Big label value, centered
+    char valStr[4];
+    if (_labelPickVal == 0) strcpy(valStr, "--");
+    else snprintf(valStr, sizeof(valStr), "%u", _labelPickVal);
+    _gfx->setTextSize(3);
+    _gfx->setTextColor(C_TEXT);
+    int16_t vw = (int16_t)strlen(valStr) * 18;
+    _gfx->setCursor(160 - vw/2, 80);
+    _gfx->print(valStr);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(30, 114);
+    _gfx->print("BTN1:cycle  BTN2:confirm  BTN3:cancel");
+}
+
+// ── Header bar ───────────────────────────────────────────────────────────────
 static void drawHeader() {
     _gfx->fillRect(0, 0, 320, HDR_H, C_HDR);
 
@@ -88,15 +162,21 @@ static void drawHeader() {
     _gfx->setCursor(2, 4);
     _gfx->print("OKAI BMS " FW_VERSION);
 
+    // WiFi + log mode in the centre
+    LogMode lm = logCurrentMode();
+    char wstr[16];
+    const char *modeTag = (lm == LOG_RIDE) ? " [R]" : (lm == LOG_CHARGE) ? " [C]" : "";
+    snprintf(wstr, sizeof(wstr), "%s%s",
+             wifiActive ? "WiFi:ON" : "WiFi:OFF", modeTag);
     _gfx->setCursor(148, 4);
     _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
-    _gfx->print(wifiActive ? "WiFi:ON " : "WiFi:OFF");
+    _gfx->print(wstr);
 
     uint32_t s = millis() / 1000;
     char up[10];
     snprintf(up, sizeof(up), "%02lu:%02lu:%02lu", s/3600, (s%3600)/60, s%60);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(248, 4);
+    _gfx->setCursor(256, 4);
     _gfx->print(up);
 }
 
@@ -484,7 +564,11 @@ void displayInit() {
     _b1Prev = _b2Prev = _b3Prev = HIGH;
     _b1Ts   = _b2Ts   = _b3Ts   = 0;
 
-    memset(_prevChargeDone, 0, sizeof(_prevChargeDone));
+    memset(_prevChargeDone,  0, sizeof(_prevChargeDone));
+    memset(_portLostMs,      0, sizeof(_portLostMs));
+    memset(_portWasValid,    0, sizeof(_portWasValid));
+    _showDisconnect = false;
+    _showLabelPick  = false;
 
     _bus = new Arduino_ESP32PAR8Q(
         TFT_DC, TFT_CS, TFT_WR, TFT_RD,
@@ -515,41 +599,121 @@ void displayInit() {
     Serial.println("[DISP] ready 320x170, 4 screens");
 }
 
+// ── Disconnect detection ──────────────────────────────────────────────────────
+static void checkDisconnects(uint32_t now) {
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        if (packs[i].valid) {
+            _portWasValid[i] = true;
+            _portLostMs[i]   = 0;
+        } else if (_portWasValid[i]) {
+            if (_portLostMs[i] == 0) _portLostMs[i] = now;
+            if ((now - _portLostMs[i]) > DISCONNECT_DEBOUNCE_MS) {
+                // Confirmed real disconnect after 30 s
+                _portWasValid[i] = false;
+                _portLostMs[i]   = 0;
+                if (!_showDisconnect && !_showLabelPick) {
+                    _showDisconnect = true;
+                    _disconnectPort = i;
+                    _labelPickVal   = labelGet(i);  // pre-fill with current label
+                }
+            }
+        }
+    }
+}
+
 void displayLoop() {
     uint32_t now = millis();
 
-    // BTN1 — WiFi (screen 0) or cycle pack (screen 1)
+    // ── Disconnect detection (runs always, independent of overlays)
+    checkDisconnects(now);
+
+    // ── Button reading
     bool b1 = digitalRead(BUTTON1_PIN);
+    bool b2 = digitalRead(BUTTON2_PIN);
+    bool b3 = digitalRead(BUTTON3_PIN);
+
+    // ── Overlay: label picker (highest priority — consumes all buttons)
+    if (_showLabelPick) {
+        // BTN1 — cycle label 0 → 1 → … → 8 → 0
+        if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
+            _b1Ts = now;
+            _labelPickVal = (_labelPickVal >= NUM_LABELS) ? 0 : _labelPickVal + 1;
+        }
+        // BTN2 — confirm
+        if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
+            _b2Ts = now;
+            labelSet(_labelPickPort, _labelPickVal);
+            _showLabelPick = false;
+            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);  // force redraw
+        }
+        // BTN3 — cancel
+        if (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
+            _b3Ts = now;
+            _showLabelPick = false;
+            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
+        }
+        _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
+        drawLabelPicker();
+        return;
+    }
+
+    // ── Overlay: disconnect modal
+    if (_showDisconnect) {
+        // BTN1 — yes, assign new label
+        if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
+            _b1Ts = now;
+            _showDisconnect = false;
+            _showLabelPick  = true;
+            _labelPickPort  = _disconnectPort;
+            // _labelPickVal already set when disconnect was triggered
+        }
+        // BTN2 or BTN3 — dismiss
+        if ((_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) ||
+            (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS)) {
+            _b2Ts = _b3Ts = now;
+            _showDisconnect = false;
+            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
+        }
+        _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
+        drawDisconnectModal();
+        return;
+    }
+
+    // ── Normal button handling
+    // BTN1 — WiFi toggle (screen 0) or cycle pack (screen 1)
     if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
         _b1Ts = now;
-        if (_screen == 0) {
-            wifiToggle();
-        } else if (_screen == 1) {
-            _detailPack = (_detailPack + 1) % NUM_PACKS;
-        }
+        if (_screen == 0)      wifiToggle();
+        else if (_screen == 1) _detailPack = (_detailPack + 1) % NUM_PACKS;
     }
     _b1Prev = b1;
 
     // BTN2 — next screen →
-    bool b2 = digitalRead(BUTTON2_PIN);
     if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
         _b2Ts   = now;
         _screen = (_screen + 1) % NUM_SCREENS;
     }
     _b2Prev = b2;
 
-    // BTN3 — prev screen ←
-    bool b3 = digitalRead(BUTTON3_PIN);
-    if (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
-        _b3Ts   = now;
-        _screen = (_screen + NUM_SCREENS - 1) % NUM_SCREENS;
+    // BTN3 — prev screen ← (short press) OR label assign (long press on screen 0)
+    if (b3 == LOW && _b3Prev == HIGH) _b3Ts = now;  // record press start
+    if (_b3Prev == LOW && b3 == HIGH) {              // released
+        uint32_t held = now - _b3Ts;
+        if (held >= LONGPRESS_MS && _screen == 0) {
+            // Long press on fleet screen → label assignment for port 0
+            _showLabelPick = true;
+            _labelPickPort = 0;
+            _labelPickVal  = labelGet(0);
+        } else if (held >= DEBOUNCE_MS && held < LONGPRESS_MS) {
+            _screen = (_screen + NUM_SCREENS - 1) % NUM_SCREENS;
+        }
     }
     _b3Prev = b3;
 
-    // Charge-done alert (checked every loop for responsive flash)
+    // ── Charge-done alert (every loop for responsive flash)
     applyAlertOverlay();
 
-    // Screen refresh at DISPLAY_REFRESH_MS cadence
+    // ── Periodic screen refresh
     if (now - _dispLast < DISPLAY_REFRESH_MS) return;
     _dispLast = now;
 
@@ -560,6 +724,5 @@ void displayLoop() {
         case 3: drawScreenHealth();   break;
     }
 
-    // Re-apply flash overlay after full redraw (may have been cleared)
     applyAlertOverlay();
 }

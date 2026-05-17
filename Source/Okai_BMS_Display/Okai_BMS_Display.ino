@@ -9,7 +9,8 @@ void setup() {
 
   heartbeatInit();
   uartInit();
-  loggerInit();
+  loggerInit();       // mounts LittleFS first (packlabelInit needs fsReady)
+  packlabelInit();    // loads labels, session counters, initialises DS3231
   displayInit();
   wifiServerInit();
 
