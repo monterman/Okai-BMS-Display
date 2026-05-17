@@ -56,8 +56,14 @@
 #define TFT_BL_PIN      38          // backlight enable (HIGH = on)
 
 // ─── Buttons ─────────────────────────────────────────────────────────────────
-#define BUTTON1_PIN      0          // Boot / WiFi toggle
-#define BUTTON2_PIN     14          // spare
+// All three buttons are active-LOW (press pulls GPIO to GND, use INPUT_PULLUP).
+// Button 1 + 2: solder wires from onboard PCB button pads to external
+//               waterproof momentary switches mounted on enclosure.
+// Button 3: solder wire from GPIO 21 header pin to third external switch.
+// Switch LEDs: wire always-on — LED+ → 150Ω → 5V rail, LED− → GND. No GPIO needed.
+#define BUTTON1_PIN      0          // WiFi AP toggle (onboard boot btn → external)
+#define BUTTON2_PIN     14          // User action   (onboard btn2   → external)
+#define BUTTON3_PIN     21          // User action   (GPIO 21 header → external)
 
 // ─── WiFi AP ─────────────────────────────────────────────────────────────────
 #define WIFI_AP_SSID     "OkaiBMS"

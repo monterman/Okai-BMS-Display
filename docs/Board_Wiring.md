@@ -57,6 +57,35 @@ BMS Pack 4 TX ── GPIO 18  (SoftSerial RX)
 
 ---
 
+## External Waterproof Buttons
+
+Three momentary pushbutton switches (e.g. AliExpress illuminated 16mm switches) mounted on the enclosure.
+
+### Extending the onboard buttons
+
+The T-Display-S3 has two onboard SMD buttons. Solder thin wires (28 AWG) directly to their pads and run to the external switches — the external switch is wired **in parallel** with the onboard one.
+
+```
+Button 1 (GPIO 0)  — solder to Boot button pads  → external switch terminals
+Button 2 (GPIO 14) — solder to BTN2 button pads  → external switch terminals
+Button 3 (GPIO 21) — solder to GPIO 21 header pin → external switch terminals
+```
+
+All three are active-LOW: press pulls GPIO to GND. Use `INPUT_PULLUP` in firmware — no external pull-up resistors needed.
+
+### Switch LED wiring (always-on, no GPIO required)
+
+Wire each switch LED independently to the 5V VESC rail:
+
+```
+5V rail ──[150Ω]── LED+ (switch anode)
+                   LED− (switch cathode) ── GND
+```
+
+150Ω gives ~20mA at 5V for a green/blue LED (Vf ≈ 2.0V). Buttons glow whenever the system is powered. No firmware control needed — the display handles all status indication.
+
+---
+
 ## Do Not Use — Reserved Pins
 
 | GPIO Range | Reason |
