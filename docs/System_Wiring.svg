@@ -1,0 +1,436 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960" width="1600" height="960" font-family="'Courier New',monospace">
+
+<!-- ── BACKGROUND ───────────────────────────────────────────────────── -->
+<rect width="1600" height="960" fill="#0d1117"/>
+
+<!-- ── TITLE ─────────────────────────────────────────────────────────── -->
+<text x="800" y="32" text-anchor="middle" fill="#e0e0e0" font-size="20" font-weight="bold">Okai BMS Display — Full System Wiring</text>
+<text x="800" y="52" text-anchor="middle" fill="#555" font-size="11">LILYGO T-Display-S3 · 4× Ruipu 10S4P BMS · 3× Illuminated 8mm Buttons · VESC 5V Rail</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     WIRE LAYER  (drawn first so boxes sit on top)
+═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ── GND shared bus (dark gray, bottom of diagram) ─────────────────── -->
+<!-- vertical drop from board LEFT GND pin (x=574, y=202) down to bus -->
+<polyline points="574,202 530,202 530,872" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- horizontal GND bus y=872 -->
+<line x1="60" y1="872" x2="1460" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- board RIGHT GND pin stub to bus -->
+<polyline points="802,202 860,202 860,872" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- VESC GND drop -->
+<line x1="1070" y1="482" x2="1070" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- Pack1 GND drop -->
+<line x1="160" y1="442" x2="160" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- Pack2 GND drop -->
+<line x1="1110" y1="350" x2="1110" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- Pack3 GND drop -->
+<line x1="1120" y1="170" x2="1120" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- Pack4 GND drop -->
+<line x1="1115" y1="260" x2="1115" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- SW1 GND drop -->
+<line x1="100" y1="122" x2="100" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- SW2 GND drop -->
+<line x1="108" y1="606" x2="108" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- SW3 GND drop -->
+<line x1="116" y1="682" x2="116" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/>
+<!-- GND bus label -->
+<text x="800" y="890" text-anchor="middle" fill="#555" font-size="11">━━━ COMMON GND BUS (all components share this rail) ━━━</text>
+
+<!-- ── 5V power (RED): VESC → board 5V right pin ─────────────────────── -->
+<!-- VESC 5V out at (870, 440), board 5V right pin at (802, 236) -->
+<polyline points="870,440 830,440 830,236 802,236" fill="none" stroke="#ff4444" stroke-width="3"/>
+<rect x="816" y="320" width="28" height="16" rx="2" fill="#1a0000"/>
+<text x="830" y="332" text-anchor="middle" fill="#ff4444" font-size="9">5V</text>
+
+<!-- ── Pack 1 TX → GPIO1 (GREEN) ─────────────────────────────────────── -->
+<!-- Pack1 right edge at (280, 406), GPIO1 left pin at (574, 406) -->
+<line x1="280" y1="406" x2="574" y2="406" fill="none" stroke="#00e676" stroke-width="3"/>
+<rect x="390" y="394" width="68" height="16" rx="2" fill="#001500"/>
+<text x="424" y="406" text-anchor="middle" fill="#00e676" font-size="10" dominant-baseline="middle">BMS1 TX</text>
+
+<!-- ── Pack 2 TX → GPIO16 (BLUE) ─────────────────────────────────────── -->
+<!-- Pack2 left edge at (870, 326), route to GPIO16 right pin (802, 338) -->
+<polyline points="870,326 836,326 836,338 802,338" fill="none" stroke="#4488ff" stroke-width="3"/>
+<rect x="820" y="314" width="68" height="16" rx="2" fill="#00001a"/>
+<text x="854" y="322" text-anchor="middle" fill="#4488ff" font-size="10">BMS2 TX</text>
+
+<!-- ── Pack 3 TX → GPIO17 (YELLOW) ───────────────────────────────────── -->
+<!-- Pack3 left edge at (870, 140), route to GPIO17 right pin (802, 270) -->
+<polyline points="870,140 840,140 840,270 802,270" fill="none" stroke="#ffee00" stroke-width="3"/>
+<rect x="808" y="196" width="68" height="16" rx="2" fill="#1a1a00"/>
+<text x="842" y="204" text-anchor="middle" fill="#ffee00" font-size="10">BMS3 TX</text>
+
+<!-- ── Pack 4 TX → GPIO18 (MAGENTA) ──────────────────────────────────── -->
+<!-- Pack4 left edge at (870, 228), route to GPIO18 right pin (802, 304) -->
+<polyline points="870,228 848,228 848,304 802,304" fill="none" stroke="#ff44cc" stroke-width="3"/>
+<rect x="822" y="258" width="68" height="16" rx="2" fill="#1a001a"/>
+<text x="856" y="266" text-anchor="middle" fill="#ff44cc" font-size="10">BMS4 TX</text>
+
+<!-- ── HEARTBEAT TX BUS (ORANGE DASHED): GPIO2 → all pack RX ──────────── -->
+<!-- GPIO2 left pin at (574, 440). Drop down then run horizontal bus at y=840 -->
+<polyline points="574,440 510,440 510,840" fill="none" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<!-- horizontal bus -->
+<line x1="60" y1="840" x2="1400" y2="840" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<!-- Pack1 RX branch: from bus up to pack1 bottom -->
+<polyline points="200,840 200,442" fill="none" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<circle cx="200" cy="840" r="5" fill="#ff8800"/>
+<!-- Pack2 RX branch: up to pack2 bottom -->
+<polyline points="970,840 970,350" fill="none" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<circle cx="970" cy="840" r="5" fill="#ff8800"/>
+<!-- Pack3 RX branch: up to pack3 bottom -->
+<polyline points="990,840 990,168" fill="none" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<circle cx="990" cy="840" r="5" fill="#ff8800"/>
+<!-- Pack4 RX branch: up to pack4 bottom -->
+<polyline points="1010,840 1010,258" fill="none" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/>
+<circle cx="1010" cy="840" r="5" fill="#ff8800"/>
+<!-- junction dot where GPIO2 drop meets bus -->
+<circle cx="510" cy="840" r="6" fill="#ff8800"/>
+<!-- bus label -->
+<rect x="680" y="826" width="156" height="18" rx="3" fill="#1a0800"/>
+<text x="758" y="838" text-anchor="middle" fill="#ff8800" font-size="10" dominant-baseline="middle">GPIO2 HEARTBEAT TX BUS</text>
+
+<!-- ── BTN1 signal (CYAN): SW1 → GPIO0 ───────────────────────────────── -->
+<!-- SW1 right edge (185, 80), GPIO0 left pin (574, 372) -->
+<polyline points="185,80 545,80 545,372 574,372" fill="none" stroke="#00e5ff" stroke-width="2.5"/>
+<rect x="330" y="68" width="68" height="16" rx="2" fill="#001a1a"/>
+<text x="364" y="76" text-anchor="middle" fill="#00e5ff" font-size="10">GPIO 0</text>
+
+<!-- ── BTN2 signal (CYAN2): SW2 → GPIO14 ─────────────────────────────── -->
+<!-- SW2 right edge (185, 566), GPIO14 left pin (574, 644) -->
+<polyline points="185,566 555,566 555,644 574,644" fill="none" stroke="#00bcd4" stroke-width="2.5"/>
+<rect x="330" y="554" width="68" height="16" rx="2" fill="#001a1a"/>
+<text x="364" y="562" text-anchor="middle" fill="#00bcd4" font-size="10">GPIO 14</text>
+
+<!-- ── BTN3 signal (LIGHT BLUE): SW3 → GPIO21 ────────────────────────── -->
+<!-- SW3 right edge (185, 646), GPIO21 left pin (574, 678) -->
+<polyline points="185,646 562,646 562,678 574,678" fill="none" stroke="#29b6f6" stroke-width="2.5"/>
+<rect x="310" y="634" width="68" height="16" rx="2" fill="#001018"/>
+<text x="344" y="642" text-anchor="middle" fill="#29b6f6" font-size="10">GPIO 21</text>
+
+<!-- ── LED always-on: SW1 LED+ from 5V bus ───────────────────────────── -->
+<polyline points="185,96 240,96 240,236 802,236" fill="none" stroke="#ff8866" stroke-width="1.5" stroke-dasharray="4,3"/>
+<!-- SW2 LED+ -->
+<polyline points="185,582 248,582 248,236" fill="none" stroke="#ff8866" stroke-width="1.5" stroke-dasharray="4,3"/>
+<circle cx="248" cy="236" r="4" fill="#ff8866" opacity="0.5"/>
+<!-- SW3 LED+ -->
+<polyline points="185,662 256,662 256,236" fill="none" stroke="#ff8866" stroke-width="1.5" stroke-dasharray="4,3"/>
+<circle cx="256" cy="236" r="4" fill="#ff8866" opacity="0.5"/>
+<circle cx="240" cy="236" r="4" fill="#ff8866" opacity="0.5"/>
+<!-- join dot at 5V rail -->
+<circle cx="802" cy="236" r="5" fill="#ff4444"/>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     T-DISPLAY-S3 PCB
+═══════════════════════════════════════════════════════════════════ -->
+
+<rect x="580" y="68" width="210" height="700" rx="10" fill="#0a1a0a" stroke="#2d6a2d" stroke-width="3"/>
+
+<!-- TFT display window -->
+<rect x="586" y="74" width="198" height="80" rx="5" fill="#050e20" stroke="#1a3a6a" stroke-width="2"/>
+<rect x="590" y="78" width="190" height="72" rx="3" fill="#060f24"/>
+<text x="685" y="108" text-anchor="middle" fill="#2255cc" font-size="11" font-weight="bold">1.9″ ST7789 TFT</text>
+<text x="685" y="124" text-anchor="middle" fill="#1a3a7a" font-size="10">170×320  parallel bus</text>
+<text x="685" y="140" text-anchor="middle" fill="#112244" font-size="9">GPIO 5-9, 38-48 reserved</text>
+
+<!-- board chip label -->
+<text x="685" y="168" text-anchor="middle" fill="#3a8a3a" font-size="11" font-weight="bold">LILYGO T-Display-S3</text>
+<text x="685" y="182" text-anchor="middle" fill="#2a5a2a" font-size="10">ESP32-S3  240 MHz  PSRAM</text>
+
+<!-- USB-C at bottom -->
+<rect x="645" y="753" width="80" height="18" rx="4" fill="#222" stroke="#555" stroke-width="1.5"/>
+<text x="685" y="765" text-anchor="middle" fill="#888" font-size="9">USB-C  debug/flash</text>
+
+<!-- Left header strip -->
+<rect x="576" y="195" width="14" height="495" rx="2" fill="#1c1c1c" stroke="#3a3a3a" stroke-width="1"/>
+<!-- Right header strip -->
+<rect x="780" y="195" width="14" height="390" rx="2" fill="#1c1c1c" stroke="#3a3a3a" stroke-width="1"/>
+
+<!-- ── LEFT PINS ──────────────────────────────────────────────────── -->
+<!-- y = 202 + idx*34 for idx 0..14 -->
+
+<!-- idx0 GND y=202 -->
+<circle cx="576" cy="202" r="5" fill="#666"/>
+<line x1="556" y1="202" x2="576" y2="202" stroke="#666" stroke-width="2"/>
+<text x="550" y="202" text-anchor="end" fill="#666" font-size="10" dominant-baseline="middle">GND</text>
+
+<!-- idx1 3V3 y=236 -->
+<circle cx="576" cy="236" r="5" fill="#ff7043"/>
+<line x1="556" y1="236" x2="576" y2="236" stroke="#ff7043" stroke-width="2"/>
+<text x="550" y="236" text-anchor="end" fill="#ff7043" font-size="10" dominant-baseline="middle">3V3</text>
+
+<!-- idx2 GPIO43/TX0 y=270 -->
+<circle cx="576" cy="270" r="4" fill="#334"/>
+<line x1="556" y1="270" x2="576" y2="270" stroke="#334" stroke-width="1.5"/>
+<text x="550" y="270" text-anchor="end" fill="#445" font-size="9" dominant-baseline="middle">GPIO43 TX0</text>
+
+<!-- idx3 GPIO44/RX0 y=304 -->
+<circle cx="576" cy="304" r="4" fill="#334"/>
+<line x1="556" y1="304" x2="576" y2="304" stroke="#334" stroke-width="1.5"/>
+<text x="550" y="304" text-anchor="end" fill="#445" font-size="9" dominant-baseline="middle">GPIO44 RX0</text>
+
+<!-- idx4 3V3(2) y=338 -->
+<circle cx="576" cy="338" r="4" fill="#552"/>
+<line x1="556" y1="338" x2="576" y2="338" stroke="#552" stroke-width="1.5"/>
+<text x="550" y="338" text-anchor="end" fill="#774" font-size="9" dominant-baseline="middle">3V3</text>
+
+<!-- idx5 GPIO0 BTN1 y=372 — ACTIVE CYAN -->
+<circle cx="576" cy="372" r="6" fill="#00e5ff"/>
+<line x1="556" y1="372" x2="576" y2="372" stroke="#00e5ff" stroke-width="2.5"/>
+<text x="550" y="372" text-anchor="end" fill="#00e5ff" font-size="10" font-weight="bold" dominant-baseline="middle">GPIO0 BTN1●</text>
+
+<!-- idx6 GPIO1 Pack1 RX y=406 — ACTIVE GREEN -->
+<circle cx="576" cy="406" r="6" fill="#00e676"/>
+<line x1="556" y1="406" x2="576" y2="406" stroke="#00e676" stroke-width="2.5"/>
+<text x="550" y="406" text-anchor="end" fill="#00e676" font-size="10" font-weight="bold" dominant-baseline="middle">GPIO1 P1RX●</text>
+
+<!-- idx7 GPIO2 Shared TX y=440 — ACTIVE ORANGE -->
+<circle cx="576" cy="440" r="6" fill="#ff8800"/>
+<line x1="556" y1="440" x2="576" y2="440" stroke="#ff8800" stroke-width="2.5"/>
+<text x="550" y="440" text-anchor="end" fill="#ff8800" font-size="10" font-weight="bold" dominant-baseline="middle">GPIO2 TX●</text>
+
+<!-- idx8 GPIO3 strapping y=474 — dim -->
+<circle cx="576" cy="474" r="4" fill="#333"/>
+<line x1="556" y1="474" x2="576" y2="474" stroke="#333" stroke-width="1"/>
+<text x="550" y="474" text-anchor="end" fill="#444" font-size="9" dominant-baseline="middle">GPIO3 strap</text>
+
+<!-- idx9 GPIO10 y=508 — dim PSRAM -->
+<circle cx="576" cy="508" r="4" fill="#222"/>
+<line x1="556" y1="508" x2="576" y2="508" stroke="#222" stroke-width="1"/>
+<text x="550" y="508" text-anchor="end" fill="#334" font-size="9" dominant-baseline="middle">GPIO10 PSRAM</text>
+
+<!-- idx10 GPIO11 y=542 -->
+<circle cx="576" cy="542" r="4" fill="#222"/>
+<line x1="556" y1="542" x2="576" y2="542" stroke="#222" stroke-width="1"/>
+<text x="550" y="542" text-anchor="end" fill="#334" font-size="9" dominant-baseline="middle">GPIO11 PSRAM</text>
+
+<!-- idx11 GPIO12 y=576 -->
+<circle cx="576" cy="576" r="4" fill="#222"/>
+<line x1="556" y1="576" x2="576" y2="576" stroke="#222" stroke-width="1"/>
+<text x="550" y="576" text-anchor="end" fill="#334" font-size="9" dominant-baseline="middle">GPIO12 PSRAM</text>
+
+<!-- idx12 GPIO13 y=610 -->
+<circle cx="576" cy="610" r="4" fill="#222"/>
+<line x1="556" y1="610" x2="576" y2="610" stroke="#222" stroke-width="1"/>
+<text x="550" y="610" text-anchor="end" fill="#334" font-size="9" dominant-baseline="middle">GPIO13 PSRAM</text>
+
+<!-- idx13 GPIO14 BTN2 y=644 — ACTIVE CYAN -->
+<circle cx="576" cy="644" r="6" fill="#00bcd4"/>
+<line x1="556" y1="644" x2="576" y2="644" stroke="#00bcd4" stroke-width="2.5"/>
+<text x="550" y="644" text-anchor="end" fill="#00bcd4" font-size="10" font-weight="bold" dominant-baseline="middle">GPIO14 BTN2●</text>
+
+<!-- idx14 GPIO21 BTN3 y=678 — ACTIVE LIGHT BLUE -->
+<circle cx="576" cy="678" r="6" fill="#29b6f6"/>
+<line x1="556" y1="678" x2="576" y2="678" stroke="#29b6f6" stroke-width="2.5"/>
+<text x="550" y="678" text-anchor="end" fill="#29b6f6" font-size="10" font-weight="bold" dominant-baseline="middle">GPIO21 BTN3●</text>
+
+<!-- ── RIGHT PINS ─────────────────────────────────────────────────── -->
+<!-- y = 202 + idx*34, stubs go right, labels right of dot -->
+
+<!-- idx0 GND y=202 -->
+<circle cx="794" cy="202" r="5" fill="#666"/>
+<line x1="794" y1="202" x2="814" y2="202" stroke="#666" stroke-width="2"/>
+<text x="820" y="202" fill="#666" font-size="10" dominant-baseline="middle">GND</text>
+
+<!-- idx1 5V y=236 — ACTIVE RED -->
+<circle cx="794" cy="236" r="6" fill="#ff4444"/>
+<line x1="794" y1="236" x2="814" y2="236" stroke="#ff4444" stroke-width="2.5"/>
+<text x="820" y="236" fill="#ff4444" font-size="10" font-weight="bold" dominant-baseline="middle">●5V  (from VESC)</text>
+
+<!-- idx2 GPIO17 Pack3 y=270 — ACTIVE YELLOW -->
+<circle cx="794" cy="270" r="6" fill="#ffee00"/>
+<line x1="794" y1="270" x2="814" y2="270" stroke="#ffee00" stroke-width="2.5"/>
+<text x="820" y="270" fill="#ffee00" font-size="10" font-weight="bold" dominant-baseline="middle">●GPIO17 P3RX</text>
+
+<!-- idx3 GPIO18 Pack4 y=304 — ACTIVE MAGENTA -->
+<circle cx="794" cy="304" r="6" fill="#ff44cc"/>
+<line x1="794" y1="304" x2="814" y2="304" stroke="#ff44cc" stroke-width="2.5"/>
+<text x="820" y="304" fill="#ff44cc" font-size="10" font-weight="bold" dominant-baseline="middle">●GPIO18 P4RX</text>
+
+<!-- idx4 GPIO16 Pack2 y=338 — ACTIVE BLUE -->
+<circle cx="794" cy="338" r="6" fill="#4488ff"/>
+<line x1="794" y1="338" x2="814" y2="338" stroke="#4488ff" stroke-width="2.5"/>
+<text x="820" y="338" fill="#4488ff" font-size="10" font-weight="bold" dominant-baseline="middle">●GPIO16 P2RX</text>
+
+<!-- idx5 GPIO15 PWR_EN y=372 — reserved -->
+<circle cx="794" cy="372" r="4" fill="#333"/>
+<line x1="794" y1="372" x2="814" y2="372" stroke="#333" stroke-width="1.5"/>
+<text x="820" y="372" fill="#445" font-size="9" dominant-baseline="middle">GPIO15 PWR_EN</text>
+
+<!-- idx6 GPIO4 BAT ADC y=406 — reserved -->
+<circle cx="794" cy="406" r="4" fill="#333"/>
+<line x1="794" y1="406" x2="814" y2="406" stroke="#333" stroke-width="1.5"/>
+<text x="820" y="406" fill="#445" font-size="9" dominant-baseline="middle">GPIO4  BAT_ADC</text>
+
+<!-- idx7-11 display bus — very dim -->
+<circle cx="794" cy="440" r="3" fill="#1a1a1a"/><line x1="794" y1="440" x2="814" y2="440" stroke="#1a1a1a" stroke-width="1"/>
+<text x="820" y="440" fill="#2a2a2a" font-size="9" dominant-baseline="middle">GPIO5  display▪</text>
+<circle cx="794" cy="474" r="3" fill="#1a1a1a"/><line x1="794" y1="474" x2="814" y2="474" stroke="#1a1a1a" stroke-width="1"/>
+<text x="820" y="474" fill="#2a2a2a" font-size="9" dominant-baseline="middle">GPIO6  display▪</text>
+<circle cx="794" cy="508" r="3" fill="#1a1a1a"/><line x1="794" y1="508" x2="814" y2="508" stroke="#1a1a1a" stroke-width="1"/>
+<text x="820" y="508" fill="#2a2a2a" font-size="9" dominant-baseline="middle">GPIO7  display▪</text>
+<circle cx="794" cy="542" r="3" fill="#1a1a1a"/><line x1="794" y1="542" x2="814" y2="542" stroke="#1a1a1a" stroke-width="1"/>
+<text x="820" y="542" fill="#2a2a2a" font-size="9" dominant-baseline="middle">GPIO8  display▪</text>
+<circle cx="794" cy="576" r="3" fill="#1a1a1a"/><line x1="794" y1="576" x2="814" y2="576" stroke="#1a1a1a" stroke-width="1"/>
+<text x="820" y="576" fill="#2a2a2a" font-size="9" dominant-baseline="middle">GPIO9  display▪</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     BMS PACK BLOCKS
+═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ── Pack 1 (left side) ────────────────────────────────────────── -->
+<rect x="30" y="372" width="250" height="68" rx="6" fill="#0d1f0d" stroke="#00e676" stroke-width="2"/>
+<text x="155" y="394" text-anchor="middle" fill="#00e676" font-size="12" font-weight="bold">BMS Pack 1</text>
+<text x="155" y="410" text-anchor="middle" fill="#aaa" font-size="10">Ruipu 10S4P  9600 baud</text>
+<text x="155" y="424" text-anchor="middle" fill="#666" font-size="9">UART1 HW · GPIO1 RX</text>
+<!-- TX label on right edge -->
+<text x="284" y="402" fill="#00e676" font-size="9" dominant-baseline="middle">TX→</text>
+<!-- RX label on bottom -->
+<text x="200" y="446" text-anchor="middle" fill="#ff8800" font-size="9">↓RX (GPIO2 heartbeat)</text>
+<!-- GND symbol -->
+<text x="50" y="444" fill="#555" font-size="9">⏚GND</text>
+
+<!-- ── Pack 2 (right side) ────────────────────────────────────────── -->
+<rect x="870" y="292" width="250" height="68" rx="6" fill="#0d0d1f" stroke="#4488ff" stroke-width="2"/>
+<text x="995" y="314" text-anchor="middle" fill="#4488ff" font-size="12" font-weight="bold">BMS Pack 2</text>
+<text x="995" y="330" text-anchor="middle" fill="#aaa" font-size="10">Ruipu 10S4P  9600 baud</text>
+<text x="995" y="344" text-anchor="middle" fill="#666" font-size="9">UART2 HW · GPIO16 RX</text>
+<!-- TX label on left edge -->
+<text x="864" y="326" text-anchor="end" fill="#4488ff" font-size="9" dominant-baseline="middle">←TX</text>
+<!-- RX label on bottom -->
+<text x="970" y="366" text-anchor="middle" fill="#ff8800" font-size="9">↓RX (GPIO2 heartbeat)</text>
+<text x="1090" y="364" fill="#555" font-size="9">⏚GND</text>
+
+<!-- ── Pack 3 (right side) ────────────────────────────────────────── -->
+<rect x="870" y="106" width="250" height="68" rx="6" fill="#1a1a00" stroke="#ffee00" stroke-width="2"/>
+<text x="995" y="128" text-anchor="middle" fill="#ffee00" font-size="12" font-weight="bold">BMS Pack 3</text>
+<text x="995" y="144" text-anchor="middle" fill="#aaa" font-size="10">Ruipu 10S4P  9600 baud</text>
+<text x="995" y="158" text-anchor="middle" fill="#666" font-size="9">SoftSerial · GPIO17 RX</text>
+<!-- TX label -->
+<text x="864" y="140" text-anchor="end" fill="#ffee00" font-size="9" dominant-baseline="middle">←TX</text>
+<!-- RX label -->
+<text x="990" y="180" text-anchor="middle" fill="#ff8800" font-size="9">↓RX (GPIO2 heartbeat)</text>
+<text x="1100" y="178" fill="#555" font-size="9">⏚GND</text>
+
+<!-- ── Pack 4 (right side) ────────────────────────────────────────── -->
+<rect x="870" y="192" width="250" height="68" rx="6" fill="#1a001a" stroke="#ff44cc" stroke-width="2"/>
+<text x="995" y="214" text-anchor="middle" fill="#ff44cc" font-size="12" font-weight="bold">BMS Pack 4</text>
+<text x="995" y="230" text-anchor="middle" fill="#aaa" font-size="10">Ruipu 10S4P  9600 baud</text>
+<text x="995" y="244" text-anchor="middle" fill="#666" font-size="9">SoftSerial · GPIO18 RX</text>
+<!-- TX label -->
+<text x="864" y="228" text-anchor="end" fill="#ff44cc" font-size="9" dominant-baseline="middle">←TX</text>
+<!-- RX label -->
+<text x="1010" y="266" text-anchor="middle" fill="#ff8800" font-size="9">↓RX (GPIO2 heartbeat)</text>
+<text x="1105" y="278" fill="#555" font-size="9">⏚GND</text>
+
+<!-- ── Pack wiring note ───────────────────────────────────────────── -->
+<rect x="868" y="74" width="254" height="26" rx="4" fill="#111" stroke="#333" stroke-width="1"/>
+<text x="995" y="91" text-anchor="middle" fill="#666" font-size="10">Each pack: 3 wires — GND, TX, RX(shared)</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     VESC POWER BLOCK
+═══════════════════════════════════════════════════════════════════ -->
+<rect x="870" y="408" width="250" height="76" rx="6" fill="#1a0000" stroke="#ff4444" stroke-width="2"/>
+<text x="995" y="430" text-anchor="middle" fill="#ff4444" font-size="12" font-weight="bold">VESC Power Rail</text>
+<text x="995" y="448" text-anchor="middle" fill="#aaa" font-size="10">5V out  →  ESP32 5V pin</text>
+<text x="995" y="463" text-anchor="middle" fill="#666" font-size="9">Also powers switch LEDs (via 150Ω)</text>
+<text x="995" y="477" text-anchor="middle" fill="#888" font-size="9">GND common with all packs + board</text>
+<!-- 5V terminal label -->
+<text x="864" y="440" text-anchor="end" fill="#ff4444" font-size="9" dominant-baseline="middle">←5V</text>
+<text x="864" y="454" text-anchor="end" fill="#555" font-size="9" dominant-baseline="middle">⏚GND</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SWITCH BLOCKS (left side)
+═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ── Switch 1 (GPIO 0 / BTN1) ────────────────────────────────────── -->
+<rect x="30" y="50" width="155" height="68" rx="6" fill="#001a1a" stroke="#00e5ff" stroke-width="2"/>
+<!-- switch symbol inside box -->
+<line x1="62" y1="84" x2="78" y2="84" stroke="#00e5ff" stroke-width="2"/>
+<circle cx="90" cy="76" r="6" fill="none" stroke="#00e5ff" stroke-width="2"/>
+<line x1="96" y1="80" x2="108" y2="84" stroke="#00e5ff" stroke-width="2"/>
+<line x1="108" y1="84" x2="122" y2="84" stroke="#00e5ff" stroke-width="2"/>
+<!-- LED symbol -->
+<circle cx="148" cy="80" r="8" fill="#001030" stroke="#00e5ff" stroke-width="1.5"/>
+<text x="148" y="84" text-anchor="middle" fill="#00e5ff" font-size="8">LED</text>
+<text x="92" y="107" text-anchor="middle" fill="#00e5ff" font-size="10" font-weight="bold">BTN 1</text>
+<text x="92" y="120" text-anchor="middle" fill="#666" font-size="9">GPIO0 · WiFi AP toggle</text>
+<!-- signal and LED terminals -->
+<text x="189" y="80" fill="#00e5ff" font-size="9" dominant-baseline="middle">→sig</text>
+<text x="189" y="96" fill="#ff8866" font-size="9" dominant-baseline="middle">→LED+</text>
+<text x="40" y="122" fill="#555" font-size="9">⏚COM→GND</text>
+
+<!-- ── Switch 2 (GPIO 14 / BTN2) ───────────────────────────────────── -->
+<rect x="30" y="532" width="155" height="68" rx="6" fill="#001418" stroke="#00bcd4" stroke-width="2"/>
+<line x1="62" y1="566" x2="78" y2="566" stroke="#00bcd4" stroke-width="2"/>
+<circle cx="90" cy="558" r="6" fill="none" stroke="#00bcd4" stroke-width="2"/>
+<line x1="96" y1="562" x2="108" y2="566" stroke="#00bcd4" stroke-width="2"/>
+<line x1="108" y1="566" x2="122" y2="566" stroke="#00bcd4" stroke-width="2"/>
+<circle cx="148" cy="562" r="8" fill="#001018" stroke="#00bcd4" stroke-width="1.5"/>
+<text x="148" y="566" text-anchor="middle" fill="#00bcd4" font-size="8">LED</text>
+<text x="92" y="589" text-anchor="middle" fill="#00bcd4" font-size="10" font-weight="bold">BTN 2</text>
+<text x="92" y="602" text-anchor="middle" fill="#666" font-size="9">GPIO14 · user action</text>
+<text x="189" y="562" fill="#00bcd4" font-size="9" dominant-baseline="middle">→sig</text>
+<text x="189" y="578" fill="#ff8866" font-size="9" dominant-baseline="middle">→LED+</text>
+<text x="40" y="604" fill="#555" font-size="9">⏚COM→GND</text>
+
+<!-- ── Switch 3 (GPIO 21 / BTN3) ───────────────────────────────────── -->
+<rect x="30" y="612" width="155" height="68" rx="6" fill="#001018" stroke="#29b6f6" stroke-width="2"/>
+<line x1="62" y1="646" x2="78" y2="646" stroke="#29b6f6" stroke-width="2"/>
+<circle cx="90" cy="638" r="6" fill="none" stroke="#29b6f6" stroke-width="2"/>
+<line x1="96" y1="642" x2="108" y2="646" stroke="#29b6f6" stroke-width="2"/>
+<line x1="108" y1="646" x2="122" y2="646" stroke="#29b6f6" stroke-width="2"/>
+<circle cx="148" cy="642" r="8" fill="#000e18" stroke="#29b6f6" stroke-width="1.5"/>
+<text x="148" y="646" text-anchor="middle" fill="#29b6f6" font-size="8">LED</text>
+<text x="92" y="669" text-anchor="middle" fill="#29b6f6" font-size="10" font-weight="bold">BTN 3</text>
+<text x="92" y="682" text-anchor="middle" fill="#666" font-size="9">GPIO21 · user action</text>
+<text x="189" y="642" fill="#29b6f6" font-size="9" dominant-baseline="middle">→sig</text>
+<text x="189" y="658" fill="#ff8866" font-size="9" dominant-baseline="middle">→LED+</text>
+<text x="40" y="684" fill="#555" font-size="9">⏚COM→GND</text>
+
+<!-- ── Switch note ────────────────────────────────────────────────── -->
+<rect x="30" y="460" width="155" height="58" rx="4" fill="#111" stroke="#333" stroke-width="1"/>
+<text x="107" y="476" text-anchor="middle" fill="#555" font-size="9">Buttons: solder 28AWG</text>
+<text x="107" y="489" text-anchor="middle" fill="#555" font-size="9">to PCB pads → external</text>
+<text x="107" y="502" text-anchor="middle" fill="#555" font-size="9">BTN1+2: board pads</text>
+<text x="107" y="515" text-anchor="middle" fill="#555" font-size="9">BTN3: GPIO21 header</text>
+
+<!-- ── LED resistor callout ───────────────────────────────────────── -->
+<rect x="30" y="748" width="250" height="46" rx="4" fill="#111" stroke="#555" stroke-width="1"/>
+<text x="155" y="766" text-anchor="middle" fill="#ff8866" font-size="10">Switch LED wiring (all 3):</text>
+<text x="155" y="782" text-anchor="middle" fill="#aaa" font-size="10">5V ──[150Ω]── LED+   LED− ── GND</text>
+<text x="155" y="795" text-anchor="middle" fill="#555" font-size="9">≈20mA · always-on · no GPIO needed</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     LEGEND
+═══════════════════════════════════════════════════════════════════ -->
+<rect x="290" y="748" width="540" height="152" rx="6" fill="#0a0a0f" stroke="#333" stroke-width="1.5"/>
+<text x="560" y="768" text-anchor="middle" fill="#e0e0e0" font-size="11" font-weight="bold">LEGEND</text>
+
+<line x1="306" y1="782" x2="356" y2="782" stroke="#ff4444" stroke-width="3"/><text x="364" y="786" fill="#ff4444" font-size="10">5V power (VESC → board)</text>
+<line x1="306" y1="800" x2="356" y2="800" stroke="#00e676" stroke-width="3"/><text x="364" y="804" fill="#00e676" font-size="10">Pack 1 TX → GPIO1 (UART1)</text>
+<line x1="306" y1="818" x2="356" y2="818" stroke="#4488ff" stroke-width="3"/><text x="364" y="822" fill="#4488ff" font-size="10">Pack 2 TX → GPIO16 (UART2)</text>
+<line x1="306" y1="836" x2="356" y2="836" stroke="#ffee00" stroke-width="3"/><text x="364" y="840" fill="#ffee00" font-size="10">Pack 3 TX → GPIO17 (SoftSerial)</text>
+<line x1="306" y1="854" x2="356" y2="854" stroke="#ff44cc" stroke-width="3"/><text x="364" y="858" fill="#ff44cc" font-size="10">Pack 4 TX → GPIO18 (SoftSerial)</text>
+<line x1="306" y1="872" x2="356" y2="872" stroke="#555" stroke-width="2" stroke-dasharray="6,3"/><text x="364" y="876" fill="#555" font-size="10">Common GND bus</text>
+<line x1="306" y1="890" x2="356" y2="890" stroke="#ff8800" stroke-width="2.5" stroke-dasharray="8,4"/><text x="364" y="894" fill="#ff8800" font-size="10">GPIO2 TX heartbeat → ALL pack RX (shared bus)</text>
+
+<line x1="490" y1="782" x2="540" y2="782" stroke="#00e5ff" stroke-width="2.5"/><text x="548" y="786" fill="#00e5ff" font-size="10">BTN1 signal → GPIO0</text>
+<line x1="490" y1="800" x2="540" y2="800" stroke="#00bcd4" stroke-width="2.5"/><text x="548" y="804" fill="#00bcd4" font-size="10">BTN2 signal → GPIO14</text>
+<line x1="490" y1="818" x2="540" y2="818" stroke="#29b6f6" stroke-width="2.5"/><text x="548" y="822" fill="#29b6f6" font-size="10">BTN3 signal → GPIO21</text>
+<line x1="490" y1="836" x2="540" y2="836" stroke="#ff8866" stroke-width="1.5" stroke-dasharray="4,3"/><text x="548" y="840" fill="#ff8866" font-size="10">LED+ (5V via 150Ω, always-on)</text>
+<text x="490" y="860" fill="#2d6a2d" font-size="10">● = active / connected pin</text>
+<text x="490" y="876" fill="#334" font-size="10">▪ = reserved (display / PSRAM)</text>
+<text x="490" y="892" fill="#334" font-size="10">⏚ = GND symbol (all tie to common bus)</text>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     OFFICIAL PINOUT REFERENCE NOTE
+═══════════════════════════════════════════════════════════════════ -->
+<rect x="870" y="516" width="590" height="36" rx="4" fill="#0a0a0f" stroke="#333" stroke-width="1"/>
+<text x="1165" y="530" text-anchor="middle" fill="#555" font-size="10">Official pinout ref: github.com/Xinyuan-LilyGO/T-Display-S3</text>
+<text x="1165" y="544" text-anchor="middle" fill="#444" font-size="9">Pin layout matches T-Display-S3 left/right header as shipped · Config.h FW v0.1.0</text>
+
+<!-- ── Version footer ────────────────────────────────────────────── -->
+<text x="800" y="946" text-anchor="middle" fill="#333" font-size="10">Okai BMS Display v0.1.0 · docs/System_Wiring.svg · All buttons active-LOW (INPUT_PULLUP) · BMS 9600 baud 3.3V logic</text>
+
+</svg>
