@@ -5,3 +5,7 @@
 *.DS_Store
 Thumbs.db
 build/
+
+# Machine-specific — not portable
+docs/Build.md
+CLAUDE.md

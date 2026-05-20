@@ -845,7 +845,7 @@ void displayInit() {
     _gfx = new Arduino_ST7789(_bus, TFT_RST,
                                1, true, 170, 320, 35, 0, 35, 0);
     _gfx->begin();
-    _gfx->fillScreen(BLACK);
+    _gfx->fillScreen(0);
 
     // Palette — matches plan spec
     C_BG     = _gfx->color565( 13,  13,  13);

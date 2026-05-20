@@ -71,18 +71,30 @@ Install all via Arduino Library Manager:
 
 | Library | Author | Purpose |
 |---------|--------|---------|
-| Arduino_GFX_Library | moononournation | TFT driver |
+| GFX Library for Arduino | moononournation | TFT driver |
 | EspSoftwareSerial | Dirk Kaar | Pack 3 & 4 UART |
 | RTClib | Adafruit | DS3231 RTC |
 
 LittleFS is built into the ESP32 Arduino core (no install needed).
+
+> **Note:** search Library Manager by exact name — "GFX Library for Arduino", not "Arduino_GFX_Library".
+
+---
+
+## Credits
+
+`OkaiBMS.h / OkaiBMS.cpp` — the BMS frame parser — is derived from
+[RuipuBattery](https://github.com/search?q=RuipuBattery) by its original author.
+The Ruipu/Okai protocol decoding (36-byte frame, Dallas/Maxim 1-wire CRC, field offsets)
+was reverse-engineered from that work and extended with charger detection, cycle-count
+fingerprinting, and multi-port support for this project.
 
 ---
 
 ## Build Settings
 
 - **Board:** LILYGO T-Display-S3 (or ESP32S3 Dev Module)
-- **Partition scheme:** `Huge APP` — required; default partition leaves no headroom
+- **Partition scheme:** `app3M_fat9M_16MB` (default for T-Display-S3 — 3 MB app / 9.9 MB LittleFS)
 - **Flash size:** 16 MB
 - **PSRAM:** OPI PSRAM
 

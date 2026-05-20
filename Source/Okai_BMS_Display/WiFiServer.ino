@@ -66,7 +66,7 @@ static void handleRoot() {
     char up[12];
     snprintf(up, sizeof(up), "%02lu:%02lu:%02lu", s/3600, (s%3600)/60, s%60);
 
-    char rtcStr[32];
+    char rtcStr[40];
     if (timeIsSynced()) {
         time_t t = timeNowSec();
         struct tm tm_info;
