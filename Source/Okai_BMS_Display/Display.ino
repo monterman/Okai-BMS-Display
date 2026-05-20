@@ -53,7 +53,7 @@ static uint32_t _b1Ts, _b2Ts, _b3Ts;
 static uint32_t _dispLast;
 
 // ── Pack disconnect tracking ──────────────────────────────────────────────────
-#define DISCONNECT_DEBOUNCE_MS 30000UL
+#define DISCONNECT_DEBOUNCE_MS 120000UL  // 2 min — filters brief glitches and short stops
 static uint32_t _portLostMs[NUM_PACKS];
 static bool     _portWasValid[NUM_PACKS];
 

@@ -225,7 +225,7 @@ The worst-pack line only appears when the lowest SoH is below 90%.
 
 ### Disconnect modal
 
-Appears 30 seconds after a pack stops responding (debounced to filter brief glitches):
+Appears 2 minutes after a pack stops responding (debounced to filter brief glitches and short riding stops):
 
 ```
 ┌────────────────────────────────────────────────────────┐
