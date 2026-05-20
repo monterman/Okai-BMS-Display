@@ -19,9 +19,9 @@ bool wifiActive = false;
 static WebServer _srv(80);
 extern bool fsReady;
 
-// Forward declaration — RuipuBattery instances are in UART.ino
-#include "RuipuBattery.h"
-extern RuipuBattery pack[NUM_PACKS];
+// OkaiBMS instances are in UART.ino
+#include "OkaiBMS.h"
+extern OkaiBMS pack[NUM_PACKS];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static bool isCsvFile(const char *name) {
@@ -90,7 +90,7 @@ static void handleRoot() {
     h += F("<h3>Pack status</h3>"
            "<table><tr>"
            "<th>Pack</th><th>SOC</th><th>Voltage</th><th>Current</th><th>Power</th>"
-           "<th>Avail.Wh</th><th>Cell&Delta;</th><th>Temp</th><th>Cycles</th><th>Health</th>"
+           "<th>Avail.Wh</th><th>Cell&Delta;</th><th>Temp</th><th>CYC ID</th><th>Health</th>"
            "</tr>");
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
@@ -108,15 +108,16 @@ static void handleRoot() {
                            (delta >= CELL_DELTA_WARN_V) ? "warn" : "good";
         const char *htag = (delta >= CELL_DELTA_POOR_V) ? "POOR" :
                            (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+        const char *cycStr = packRec[i].known ? packRec[i].cycID : "---";
         char row[320];
         snprintf(row, sizeof(row),
             "<td>%s</td><td>%u%%</td><td>%.2fV</td><td>%+.2fA</td>"
             "<td>%+.0fW</td><td>%.0f Wh</td><td>%u mV</td>"
-            "<td>%u&#176;C</td><td>%u</td><td class='%s'>%s</td></tr>",
+            "<td>%u&#176;C</td><td>%s</td><td class='%s'>%s</td></tr>",
             lbl, (unsigned)packs[i].soc, packs[i].voltage, packs[i].current,
             powerW, availWh,
             (unsigned)(delta * 1000.0f + 0.5f),
-            (unsigned)packs[i].maxTemp, (unsigned)packs[i].cycles,
+            (unsigned)packs[i].maxTemp, cycStr,
             cls, htag);
         h += row;
     }
@@ -162,7 +163,8 @@ static void handleRoot() {
         if (!any) h += F("<tr><td colspan='4' class='dim'>No log files yet</td></tr>");
         h += F("</table>");
         h += F("<p><a class='btn' href='/clearall'>&#9888; Delete all logs</a>"
-               " &nbsp; <a class='btn' href='/rawdump'>&#128270; Raw frame dump</a></p>");
+               " &nbsp; <a class='btn' href='/rawdump'>&#128270; Raw frame dump</a>"
+               " &nbsp; <a class='btn' href='/packs'>&#128230; Pack registry</a></p>");
 
         // Filesystem usage
         char fs[64];
@@ -281,6 +283,51 @@ static void handleRawDump() {
     _srv.send(200, "text/html", h);
 }
 
+// ── Route: /packs — lifetime registry for all known packs ────────────────────
+static void handlePacks() {
+    String h;
+    h.reserve(2048);
+    h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+           "<title>Pack Registry</title>"
+           "<style>body{background:#0d1117;color:#e0e0e0;font-family:monospace;"
+           "padding:16px}h2{color:#4af;margin:8px 0 4px}"
+           "table{border-collapse:collapse;width:100%;margin:8px 0}"
+           "th{background:#161b22;padding:6px;border:1px solid #333;color:#aaa}"
+           "td{padding:6px;border:1px solid #222;text-align:center}"
+           ".dim{color:#555}a{color:#4af}"
+           "</style></head><body>");
+    h += F("<h2>Pack Registry</h2>");
+    h += F("<table><tr>"
+           "<th>Port</th><th>CYC ID</th><th>First Seen</th><th>Cycles</th>"
+           "<th>Sessions</th><th>Wh In</th><th>Wh Out</th>"
+           "<th>SoH %</th><th>Spread mV</th>"
+           "</tr>");
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        const PackRecord *r = packRegGet(i);
+        char row[256];
+        if (!r || !r->known) {
+            snprintf(row, sizeof(row),
+                "<tr><td>%u</td><td colspan='8' class='dim'>not identified</td></tr>", i+1);
+        } else {
+            uint16_t lastSpread = r->historyLen ? r->spreadHistory[r->historyLen - 1] : 0;
+            uint8_t  lastSoh    = r->historyLen ? r->sohHistory   [r->historyLen - 1] : 0;
+            snprintf(row, sizeof(row),
+                "<tr><td>%u</td><td>%s</td><td>%s</td><td>%u&rarr;%u</td>"
+                "<td>%u</td><td>%.0f Wh</td><td>%.0f Wh</td>"
+                "<td>%u%%</td><td>%u</td></tr>",
+                i+1, r->cycID, r->firstSeen,
+                (unsigned)r->regCYC, (unsigned)r->currentCycles,
+                (unsigned)r->sessions,
+                r->totalWhCharged, r->totalWhDischarged,
+                (unsigned)lastSoh, (unsigned)lastSpread);
+        }
+        h += row;
+    }
+    h += F("</table>");
+    h += F("<p><a href='/'>&#8592; Back to dashboard</a></p></body></html>");
+    _srv.send(200, "text/html", h);
+}
+
 static void handleNotFound() {
     _srv.send(404, "text/plain", "Not found");
 }
@@ -293,6 +340,7 @@ void wifiServerInit() {
     _srv.on("/delete",   handleDelete);
     _srv.on("/clearall", handleClearAll);
     _srv.on("/rawdump",  handleRawDump);
+    _srv.on("/packs",   handlePacks);
     _srv.onNotFound(handleNotFound);
 }
 

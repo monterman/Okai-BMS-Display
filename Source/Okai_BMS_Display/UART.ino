@@ -11,6 +11,7 @@
 #include "OkaiBMS.h"
 
 static SoftwareSerial _ss3, _ss4;
+static bool _wasValid[NUM_PACKS];
 
 // Global — shared with Heartbeat.ino
 OkaiBMS pack[NUM_PACKS] = {
@@ -25,6 +26,7 @@ PackData packs[NUM_PACKS];
 
 void uartInit() {
     memset(packs, 0, sizeof(packs));
+    memset(_wasValid, 0, sizeof(_wasValid));
 
     Serial1.begin(BMS_BAUD, SERIAL_8N1, PACK1_RX_PIN, PACK1_TX_PIN);
     Serial2.begin(BMS_BAUD, SERIAL_8N1, PACK2_RX_PIN, PACK2_TX_PIN);
@@ -58,6 +60,7 @@ void uartLoop() {
             packs[i].cellLow         = pack[i].low();
             packs[i].maxTemp         = pack[i].maxTemp();
             packs[i].cycles          = pack[i].chargeCycleCount();
+            packs[i].maxSoc          = pack[i].maxSoc();
             packs[i].rawStatus       = pack[i].rawStatus();
             packs[i].chargerDetected = pack[i].isChargerDetected();
             packs[i].isCharging      = pack[i].isChargingBulk();
@@ -72,5 +75,9 @@ void uartLoop() {
         if (packs[i].valid && (now - packs[i].lastUpdateMs) > 10000UL) {
             packs[i].valid = false;
         }
+
+        // Rising edge: pack just appeared → identify against registry
+        if (!_wasValid[i] && packs[i].valid) packRegistryIdentify(i);
+        _wasValid[i] = packs[i].valid;
     }
 }

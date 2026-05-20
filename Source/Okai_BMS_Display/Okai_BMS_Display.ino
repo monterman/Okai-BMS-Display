@@ -11,6 +11,7 @@ void setup() {
   uartInit();
   loggerInit();       // mounts LittleFS first (packlabelInit needs fsReady)
   packlabelInit();    // loads labels, session counters, initialises DS3231
+  packRegistryInit(); // ensures /packs dir, ready to identify packs
   displayInit();
   wifiServerInit();
 

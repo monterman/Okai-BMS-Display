@@ -89,6 +89,8 @@ static void openFile() {
 
 static void closeFile() {
     if (!_fileOpen) return;
+    for (uint8_t i = 0; i < NUM_PACKS; i++)
+        if (packs[i].valid) packRegistrySessionUpdate(i);
     _logFile.println("# EOF");
     _logFile.close();
     _fileOpen = false;

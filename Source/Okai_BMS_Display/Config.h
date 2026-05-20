@@ -51,6 +51,10 @@
 #define CELL_DELTA_WARN_V  0.050f   // 50 mV
 #define CELL_DELTA_POOR_V  0.100f   // 100 mV
 
+// ─── Pack registry ───────────────────────────────────────────────────────────
+#define PACK_HISTORY_LEN    10   // rolling spread/SoH entries stored per pack
+#define PACK_CYC_TOLERANCE 500   // max cycle-count drift allowed for re-identification
+
 // ─── Display ─────────────────────────────────────────────────────────────────
 #define TFT_BL_PIN      38
 #define DISPLAY_REFRESH_MS  500UL
@@ -94,6 +98,7 @@ struct PackData {
     float    cellHigh;
     float    cellLow;
     uint8_t  soc;
+    uint8_t  maxSoc;           // max achievable SOC / SoH indicator (b[06])
     uint8_t  maxTemp;
     uint16_t cycles;
     uint8_t  rawStatus;
@@ -106,8 +111,24 @@ struct PackData {
     uint32_t lastUpdateMs;
 };
 
+// ─── Per-pack registry record ─────────────────────────────────────────────────
+struct PackRecord {
+    uint16_t regCYC;                           // cycle count at registration (UUID)
+    uint8_t  maxSocAtReg;                      // maxSoc at registration (tiebreaker)
+    char     firstSeen[12];                    // "YYYY-MM-DD\0"
+    uint16_t currentCycles;
+    uint16_t sessions;
+    float    totalWhCharged;
+    float    totalWhDischarged;
+    uint16_t spreadHistory[PACK_HISTORY_LEN];  // cell spread mV per session
+    uint8_t  sohHistory[PACK_HISTORY_LEN];     // maxSoc % per session
+    uint8_t  historyLen;
+    bool     known;
+    char     cycID[10];                        // "CYC-XXXX\0"
+};
+
 // ─── Cross-file globals ───────────────────────────────────────────────────────
-extern PackData packs[NUM_PACKS];   // UART.ino
+extern PackData   packs[NUM_PACKS];    // UART.ino
 extern bool     wifiActive;          // WiFiServer.ino
 extern bool     fsReady;             // Logger.ino
 
@@ -121,3 +142,11 @@ bool     timeIsSynced();
 time_t   timeNowSec();
 void     timeSyncSet(int64_t browserEpochMs);
 LogMode  logCurrentMode();           // Logger.ino — prototype for Display.ino
+
+// ─── Cross-file function prototypes (PackRegistry.ino) ───────────────────────
+extern PackRecord packRec[NUM_PACKS];
+void packRegistryInit();
+void packRegistryIdentify(uint8_t port);
+void packRegistryRegister(uint8_t port);
+void packRegistrySessionUpdate(uint8_t port);
+const PackRecord* packRegGet(uint8_t port);
