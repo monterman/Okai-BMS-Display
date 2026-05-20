@@ -112,10 +112,30 @@ Wire each switch LED independently to the 5V VESC rail:
 
 Each Ruipu/Okai 10S4P pack exposes a UART port at 9600 baud, 3.3V logic:
 
-| BMS Pin | Connect to |
-|---|---|
-| TX | ESP32 RX pin (dedicated per pack — see table above) |
-| RX | GPIO 2 (shared TX bus) |
-| GND | Common GND |
+| BMS Pin | Wire color | Connect to |
+|---|---|---|
+| TX | GREEN | ESP32 RX pin (dedicated per pack — see table above) |
+| RX | BLUE | GPIO 2 (shared TX bus) |
+| GND | YELLOW | Common GND |
 
 > **Note:** Do NOT connect BMS VCC to ESP32 3.3V. The ESP32 is powered from the VESC 5V rail. GND must be common across all packs and the ESP32.
+
+---
+
+## Pull-Up Resistors — REQUIRED
+
+The BMS TX (GREEN wire) is **open-collector**. Each GREEN wire needs a dedicated 1kΩ pull-up to 3.3V or the RX pin will float and read garbage.
+
+```
+ESP32 3.3V ──[1kΩ]──┬── GPIO  1  (Pack 1 RX)
+                    │
+ESP32 3.3V ──[1kΩ]──┬── GPIO 16  (Pack 2 RX)
+                    │
+ESP32 3.3V ──[1kΩ]──┬── GPIO 17  (Pack 3 RX)
+                    │
+ESP32 3.3V ──[1kΩ]──┬── GPIO 18  (Pack 4 RX)
+```
+
+**4× 1kΩ resistors total** — one per GREEN wire.
+
+The ESP32 internal pull-up (~45kΩ) is too weak for the open-collector BMS output. External resistors are mandatory.

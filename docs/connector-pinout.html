@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Okai BMS — Connector Pinout Reference</title>
+<style>
+  /* ── Design tokens (brief-specified; GL-003 not yet populated — fallback mode noted below) ── */
+  :root {
+    --bg-page:       #1a1a2e;
+    --bg-section:    #16213e;
+    --bg-card:       #0f3460;
+    --bg-card-alt:   #1a1a3e;
+    --border-dim:    #2a2a5e;
+    --border-accent: #4a90d9;
+    --border-warn:   #e94560;
+
+    --text-primary:  #e8e8f0;
+    --text-muted:    #8888aa;
+    --text-head:     #ffffff;
+
+    --pin-red:       #e53935;
+    --pin-black:     #212121;
+    --pin-black-bd:  #666;
+    --pin-green:     #43a047;
+    --pin-blue:      #1e88e5;
+    --pin-yellow:    #fdd835;
+
+    --wire-red:      #ef5350;
+    --wire-black:    #757575;
+    --wire-green:    #66bb6a;
+    --wire-blue:     #42a5f5;
+    --wire-yellow:   #ffee58;
+
+    --accent-cyan:   #00bcd4;
+    --accent-orange: #ff7043;
+
+    --mono: 'Courier New', 'Consolas', 'Lucida Console', monospace;
+    --sans: 'Segoe UI', system-ui, sans-serif;
+
+    --radius: 10px;
+    --radius-sm: 5px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-family: var(--mono);
+    line-height: 1.5;
+    padding: 32px 24px;
+  }
+
+  /* ── Page header ── */
+  .page-title {
+    text-align: center;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .page-subtitle {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 40px;
+    opacity: 0.6;
+  }
+
+  /* ── Section wrapper ── */
+  .diagram-section {
+    background: var(--bg-section);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius);
+    padding: 28px 28px 24px;
+    margin-bottom: 36px;
+    position: relative;
+  }
+
+  .section-label {
+    position: absolute;
+    top: -11px;
+    left: 20px;
+    background: var(--bg-page);
+    padding: 0 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .diagram-title {
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 20px;
+    letter-spacing: 0.01em;
+  }
+
+  /* ──────────────────────────────────────────────
+     DIAGRAM 1 — Circular connector
+  ────────────────────────────────────────────── */
+  .d1-layout {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .connector-face-wrap {
+    flex: 0 0 auto;
+  }
+
+  /* The SVG connector face is self-contained */
+  .connector-svg {
+    display: block;
+  }
+
+  /* Fingerprint legend */
+  .fingerprint-box {
+    flex: 1 1 220px;
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    align-self: center;
+  }
+  .fingerprint-box .fp-title {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+  }
+  .fp-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .fp-id {
+    color: var(--accent-cyan);
+    white-space: nowrap;
+    min-width: 76px;
+  }
+  .fp-eq {
+    color: var(--text-muted);
+  }
+  .fp-desc {
+    color: var(--text-primary);
+  }
+  .fp-meta {
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+
+  /* Pin label rows below the SVG */
+  .pin-legend {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 20px;
+  }
+  .pin-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 10.5px;
+  }
+  .pin-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  .pin-dot.large-dot {
+    width: 15px;
+    height: 15px;
+  }
+  .pin-dot.black { background: var(--pin-black); border-color: var(--pin-black-bd); }
+  .pin-dot.red   { background: var(--pin-red); }
+  .pin-dot.green { background: var(--pin-green); }
+  .pin-dot.blue  { background: var(--pin-blue); }
+  .pin-dot.yellow{ background: var(--pin-yellow); }
+
+  /* ──────────────────────────────────────────────
+     DIAGRAM 2 — FTDI wiring
+  ────────────────────────────────────────────── */
+  .d2-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .d2-boxes {
+    position: relative;
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+    min-height: 280px;
+  }
+
+  .wiring-box {
+    flex: 0 0 200px;
+    background: var(--bg-card-alt);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px 14px;
+    font-size: 11px;
+    position: relative;
+  }
+  .wiring-box.pack-box {
+    border: 1.5px solid var(--border-dim);
+  }
+  .wiring-box.ftdi-box {
+    border: 1.5px solid var(--border-accent);
+  }
+  .wiring-box .box-title {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-head);
+    margin-bottom: 10px;
+    letter-spacing: 0.04em;
+  }
+  .wiring-box .box-sub {
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: -6px;
+    margin-bottom: 10px;
+  }
+
+  .wire-pin {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    height: 26px;
+  }
+  .wire-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .wire-swatch.r  { background: var(--wire-red); }
+  .wire-swatch.k  { background: var(--wire-black); border: 1px solid #999; }
+  .wire-swatch.g  { background: var(--wire-green); }
+  .wire-swatch.b  { background: var(--wire-blue); }
+  .wire-swatch.y  { background: var(--wire-yellow); }
+
+  .wire-label { color: var(--text-primary); }
+  .wire-danger { color: var(--border-warn); font-size: 10px; }
+  .wire-note   { color: var(--accent-cyan); font-size: 10px; }
+  .wire-dim    { color: var(--text-muted); font-size: 10px; }
+
+  /* SVG connector canvas — sits between the two boxes */
+  .d2-svg-wrap {
+    flex: 1;
+    position: relative;
+    min-width: 200px;
+  }
+  .d2-svg-wrap svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+  }
+
+  .note-row {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    padding: 8px 12px;
+    background: var(--bg-card-alt);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--border-dim);
+  }
+  .note-row.warn {
+    border-left-color: var(--border-warn);
+    color: #f4a0a8;
+  }
+  .note-row.info {
+    border-left-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+
+  /* resistor inline symbol */
+  .r-sym {
+    display: inline-block;
+    font-size: 9px;
+    background: #333350;
+    border: 1px solid #5566aa;
+    border-radius: 2px;
+    padding: 0 4px;
+    margin: 0 2px;
+    color: #aabbff;
+    vertical-align: middle;
+  }
+
+  /* ──────────────────────────────────────────────
+     DIAGRAM 3 — LILYGO T-Display-S3
+  ────────────────────────────────────────────── */
+  .d3-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr 220px;
+    gap: 0;
+    min-height: 380px;
+    align-items: stretch;
+  }
+
+  /* Pack column */
+  .d3-packs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 0;
+    justify-content: space-around;
+  }
+
+  .pack-card {
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-size: 10px;
+    position: relative;
+  }
+  .pack-card.future {
+    border-style: dashed;
+    opacity: 0.65;
+  }
+  .pack-card .pack-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent-cyan);
+    font-weight: 700;
+    margin-bottom: 3px;
+  }
+  .pack-card.future .pack-id {
+    color: var(--text-muted);
+  }
+  .pack-wire {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 3px;
+    font-size: 9.5px;
+    color: var(--text-primary);
+  }
+  .pw-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pw-dot.g { background: var(--pin-green); }
+  .pw-dot.b { background: var(--pin-blue); }
+  .pw-dot.y { background: var(--pin-yellow); }
+
+  /* ESP32 center box */
+  .d3-esp {
+    background: var(--bg-card);
+    border: 2px solid var(--border-accent);
+    border-radius: var(--radius);
+    padding: 14px 14px;
+    margin: 0 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .esp-title {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-head);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .esp-sub {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-bottom: 12px;
+  }
+  .gpio-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    font-size: 10px;
+    gap: 6px;
+  }
+  .gpio-num {
+    background: #0a2a50;
+    border: 1px solid var(--border-accent);
+    border-radius: 3px;
+    padding: 1px 6px;
+    color: var(--accent-cyan);
+    font-weight: 700;
+    white-space: nowrap;
+    min-width: 58px;
+    text-align: center;
+  }
+  .gpio-arrow {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .gpio-desc {
+    color: var(--text-primary);
+    font-size: 9.5px;
+    text-align: right;
+    flex: 1;
+  }
+  .gpio-sep {
+    border: none;
+    border-top: 1px solid var(--border-dim);
+    margin: 6px 0;
+  }
+  .gpio-special {
+    color: var(--accent-orange);
+    font-size: 9.5px;
+  }
+
+  /* Notes column */
+  .d3-notes {
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-sm);
+    padding: 14px 14px;
+    margin-left: 0;
+    font-size: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .d3-notes .n-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 0px;
+  }
+  .d3-note-item {
+    border-left: 2px solid var(--border-accent);
+    padding-left: 8px;
+    color: var(--text-primary);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+  .d3-note-item.warn {
+    border-left-color: var(--border-warn);
+    color: #f4a0a8;
+  }
+  .d3-note-item .hex {
+    color: var(--accent-cyan);
+    font-size: 9.5px;
+  }
+
+  /* SVG canvas wrapper for D3 connections */
+  .d3-svg-container {
+    position: relative;
+    display: contents; /* let grid handle layout, SVG is absolute over whole grid */
+  }
+
+  .d3-grid-wrap {
+    position: relative;
+  }
+  .d3-grid-wrap > svg.d3-connector-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 5;
+    overflow: visible;
+  }
+
+  /* ── GL-003 gap notice ── */
+  .gl-gap-notice {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 8px;
+    opacity: 0.55;
+    font-family: var(--mono);
+  }
+</style>
+</head>
+<body>
+
+<p class="page-title">Okai BMS Display — Hardware Wiring Reference</p>
+<p class="page-subtitle">GL-003 not yet populated &mdash; brief-specified tokens used (fallback mode). Revisit when Iris populates GL-003.</p>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     DIAGRAM 1 — 5-Pin Discharge Connector
+══════════════════════════════════════════════════════════════════ -->
+<section class="diagram-section">
+  <span class="section-label">Diagram 1 of 3</span>
+  <h2 class="diagram-title">Okai Pack &mdash; 5-Pin Discharge Connector</h2>
+
+  <div class="d1-layout">
+    <!-- SVG connector face -->
+    <div class="connector-face-wrap">
+      <svg class="connector-svg" width="300" height="280" viewBox="0 0 300 280"
+           xmlns="http://www.w3.org/2000/svg" aria-label="Circular connector face diagram">
+        <defs>
+          <filter id="glow-red">
+            <feGaussianBlur stdDeviation="2.5" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="glow-blue">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        <!-- Outer connector shell -->
+        <circle cx="150" cy="140" r="128" fill="#12122a" stroke="#3a3a6e" stroke-width="3"/>
+        <!-- Inner recess ring -->
+        <circle cx="150" cy="140" r="118" fill="#0d0d22" stroke="#252550" stroke-width="1.5"/>
+        <!-- Face label -->
+        <text x="150" y="16" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="12" fill="#ffffff" letter-spacing="2" font-weight="700">MATING FACE VIEW</text>
+
+        <!-- ── Large power pins (top row) ── -->
+        <!-- LEFT: RED +36V -->
+        <circle cx="103" cy="105" r="28" fill="#b71c1c" stroke="#ef5350" stroke-width="2"
+                filter="url(#glow-red)"/>
+        <circle cx="103" cy="105" r="10" fill="#1a0505" stroke="#e53935" stroke-width="1.5"/>
+        <text x="103" y="109" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="9" fill="#ffcdd2" font-weight="700">+36V</text>
+
+        <!-- RIGHT: BLACK −36V -->
+        <circle cx="197" cy="105" r="28" fill="#1a1a1a" stroke="#666" stroke-width="2"/>
+        <circle cx="197" cy="105" r="10" fill="#0a0a0a" stroke="#888" stroke-width="1.5"/>
+        <text x="197" y="109" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="9" fill="#aaa" font-weight="700">−36V</text>
+
+        <!-- ── Small data pins (bottom row) ── -->
+        <!-- LEFT: GREEN TX -->
+        <circle cx="97" cy="183" r="11" fill="#1b5e20" stroke="#43a047" stroke-width="2"/>
+        <circle cx="97" cy="183" r="4" fill="#0a2a0a" stroke="#4caf50" stroke-width="1"/>
+
+        <!-- CENTER: BLUE RX -->
+        <circle cx="150" cy="183" r="11" fill="#0d47a1" stroke="#1e88e5" stroke-width="2"
+                filter="url(#glow-blue)"/>
+        <circle cx="150" cy="183" r="4" fill="#050d1a" stroke="#1976d2" stroke-width="1"/>
+
+        <!-- RIGHT: YELLOW GND-signal -->
+        <circle cx="203" cy="183" r="11" fill="#f57f17" stroke="#fdd835" stroke-width="2"/>
+        <circle cx="203" cy="183" r="4" fill="#1a1500" stroke="#fbc02d" stroke-width="1"/>
+
+        <!-- Pin labels inside -->
+        <text x="103" y="147" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="8" fill="#ef9a9a">RED</text>
+        <text x="197" y="147" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="8" fill="#aaa">BLACK</text>
+
+        <!-- Data pin labels -->
+        <text x="97" y="200" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="8" fill="#81c784">GRN</text>
+        <text x="150" y="200" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="8" fill="#64b5f6">BLU</text>
+        <text x="203" y="200" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="8" fill="#fff176">YLW</text>
+
+        <!-- Size annotation -->
+        <line x1="75" y1="77" x2="75" y2="133" stroke="#8888cc" stroke-width="1.5"
+              stroke-dasharray="3,3"/>
+        <text x="68" y="108" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="11" fill="#ffffff" font-weight="700" transform="rotate(-90,68,108)">PWR (large)</text>
+
+        <line x1="76" y1="172" x2="76" y2="194" stroke="#8888cc" stroke-width="1.5"
+              stroke-dasharray="3,3"/>
+        <text x="68" y="184" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="11" fill="#ffffff" font-weight="700" transform="rotate(-90,68,184)">data</text>
+
+        <!-- Pin count label -->
+        <text x="150" y="267" text-anchor="middle" font-family="'Courier New',monospace"
+              font-size="11" fill="#ffffff" font-weight="600">5-pin · 2 power · 3 data</text>
+      </svg>
+
+      <!-- Pin legend below connector -->
+      <div class="pin-legend">
+        <div class="pin-row">
+          <div class="pin-dot large-dot red"></div>
+          <span>RED &mdash; +36V &mdash; PWR+</span>
+        </div>
+        <div class="pin-row">
+          <div class="pin-dot large-dot black"></div>
+          <span>BLACK &mdash; &minus;36V &mdash; PWR&minus;</span>
+        </div>
+        <div class="pin-row">
+          <div class="pin-dot green"></div>
+          <span>GREEN &mdash; BMS TX (data out)</span>
+        </div>
+        <div class="pin-row">
+          <div class="pin-dot blue"></div>
+          <span>BLUE &mdash; BMS RX (data in)</span>
+        </div>
+        <div class="pin-row">
+          <div class="pin-dot yellow"></div>
+          <span>YELLOW &mdash; GND (signal)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fingerprint legend -->
+    <div class="fingerprint-box">
+      <div class="fp-title">Pack Fingerprint Registry</div>
+
+      <div class="fp-row">
+        <span class="fp-id">CYC-8229</span>
+        <span class="fp-eq">=</span>
+        <div>
+          <div>Pack 1</div>
+          <div class="fp-meta">SOC 100% &nbsp;·&nbsp; 41.45 V &nbsp;·&nbsp; spread 43 mV</div>
+        </div>
+      </div>
+
+      <div class="fp-row">
+        <span class="fp-id">CYC-8246</span>
+        <span class="fp-eq">=</span>
+        <div>
+          <div>Pack 2</div>
+          <div class="fp-meta">SOC 90% &nbsp;·&nbsp; 40.36 V &nbsp;·&nbsp; spread 66 mV</div>
+        </div>
+      </div>
+
+      <div class="fp-row">
+        <span class="fp-id">CYC-8256</span>
+        <span class="fp-eq">=</span>
+        <div>
+          <div>Pack 3</div>
+          <div class="fp-meta">SOC 84% &nbsp;·&nbsp; 39.79 V &nbsp;·&nbsp; spread 82 mV</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ══════════════════════════════════════════════════════════════════
+     DIAGRAM 2 — FTDI Wiring
+══════════════════════════════════════════════════════════════════ -->
+<section class="diagram-section">
+  <span class="section-label">Diagram 2 of 3</span>
+  <h2 class="diagram-title">FTDI Adapter &mdash; Okai BMS Serial Tap</h2>
+
+  <div class="d2-layout">
+    <div class="d2-boxes">
+
+      <!-- LEFT: Okai Pack box -->
+      <div class="wiring-box pack-box" id="d2-pack">
+        <div class="box-title">Okai Pack</div>
+        <div class="box-sub">5-pin discharge connector</div>
+
+        <div class="wire-pin" data-wire="red">
+          <div class="wire-swatch r"></div>
+          <div>
+            <div class="wire-label">RED &mdash; +36V</div>
+            <div class="wire-danger">&#10005; DO NOT CONNECT</div>
+          </div>
+        </div>
+        <div class="wire-pin" data-wire="black">
+          <div class="wire-swatch k"></div>
+          <div>
+            <div class="wire-label">BLACK &mdash; &minus;36V</div>
+            <div class="wire-danger">&#10005; DO NOT CONNECT</div>
+          </div>
+        </div>
+        <div class="wire-pin" data-wire="yellow" id="d2-p-gnd">
+          <div class="wire-swatch y"></div>
+          <div class="wire-label">YELLOW &mdash; GND</div>
+        </div>
+        <div class="wire-pin" data-wire="green" id="d2-p-tx">
+          <div class="wire-swatch g"></div>
+          <div>
+            <div class="wire-label">GREEN &mdash; BMS TX</div>
+            <div class="wire-dim">open-collector</div>
+          </div>
+        </div>
+        <div class="wire-pin" data-wire="blue" id="d2-p-rx">
+          <div class="wire-swatch b"></div>
+          <div class="wire-label">BLUE &mdash; BMS RX</div>
+        </div>
+      </div>
+
+      <!-- CENTER: SVG wire diagram — drawn by JS after layout -->
+      <div class="d2-svg-wrap">
+        <svg id="d2-svg" xmlns="http://www.w3.org/2000/svg" overflow="visible">
+          <defs>
+            <marker id="arr-y" markerWidth="10" markerHeight="8" refX="9" refY="4"
+                    orient="auto" markerUnits="userSpaceOnUse">
+              <polygon points="0 0,10 4,0 8" fill="#ffee58"/>
+            </marker>
+            <marker id="arr-g" markerWidth="10" markerHeight="8" refX="9" refY="4"
+                    orient="auto" markerUnits="userSpaceOnUse">
+              <polygon points="0 0,10 4,0 8" fill="#66bb6a"/>
+            </marker>
+            <marker id="arr-b" markerWidth="10" markerHeight="8" refX="9" refY="4"
+                    orient="auto" markerUnits="userSpaceOnUse">
+              <polygon points="0 0,10 4,0 8" fill="#42a5f5"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+
+      <!-- RIGHT: FTDI box -->
+      <div class="wiring-box ftdi-box" id="d2-ftdi">
+        <div class="box-title">FTDI Adapter</div>
+        <div class="box-sub">USB-UART bridge</div>
+
+        <div class="wire-pin" id="d2-f-gnd">
+          <div class="wire-swatch y"></div>
+          <div class="wire-label">GND &larr; Yellow</div>
+        </div>
+        <div class="wire-pin" id="d2-f-vcc">
+          <div class="wire-swatch" style="background:#00bcd4;"></div>
+          <div>
+            <div class="wire-label">VCC 3.3V (pull-up anchor)</div>
+          </div>
+        </div>
+        <div class="wire-pin" id="d2-f-rx">
+          <div class="wire-swatch g"></div>
+          <div>
+            <div class="wire-label">RX &larr; Green</div>
+            <div class="wire-note"><span class="r-sym">1k&#937;</span> pull-up to VCC</div>
+          </div>
+        </div>
+        <div class="wire-pin" id="d2-f-tx">
+          <div class="wire-swatch b"></div>
+          <div>
+            <div class="wire-label">TX &rarr; Blue</div>
+            <div class="wire-dim">heartbeat unlock / 5s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes row -->
+    <div class="note-row info">COM4 &nbsp;&middot;&nbsp; 9600 baud &nbsp;&middot;&nbsp; 8N1 &nbsp;&middot;&nbsp; No flow control</div>
+    <div class="note-row warn">&#9888; 1k&#937; pull-up required &mdash; GREEN wire is open-collector. Without pull-up, RX floats high / reads garbage.</div>
+  </div>
+</section>
+
+
+<!-- ══════════════════════════════════════════════════════════════════
+     DIAGRAM 3 — LILYGO T-Display-S3 / 4-Pack System
+══════════════════════════════════════════════════════════════════ -->
+<section class="diagram-section">
+  <span class="section-label">Diagram 3 of 3</span>
+  <h2 class="diagram-title">LILYGO T-Display-S3 &mdash; 4-Pack BMS Wiring</h2>
+
+  <!--
+    Layout: LEFT packs (3,4) | CENTER board | RIGHT packs (1,2) + notes
+    Physical orientation: board tall/vertical, display at top, USB-C at bottom.
+    LEFT header → GPIO 18 (top), GPIO 17, GND, 3V3
+    RIGHT header → 3V3 (top), GPIO 16, GPIO 2, GPIO 1, GND
+    All wire routing done by JS after DOM is laid out.
+  -->
+
+  <!-- Extra CSS scoped to D3 redesign -->
+  <style>
+    /* ── D3 redesign: physical board layout ── */
+    .d3r-outer {
+      display: flex;
+      gap: 0;
+      align-items: flex-start;
+      position: relative;
+      min-height: 480px;
+    }
+
+    /* LEFT column: Pack 3 (top) + Pack 4 (bottom) */
+    .d3r-left {
+      flex: 0 0 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-right: 0;
+      justify-content: center;
+      align-self: center;
+    }
+
+    /* CENTER column: the board + spacing */
+    .d3r-center {
+      flex: 0 0 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0 28px;
+    }
+
+    /* RIGHT column: Pack 1 (top) + Pack 2 + notes */
+    .d3r-right {
+      flex: 1;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .d3r-right-packs {
+      flex: 0 0 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: center;
+      align-self: center;
+    }
+
+    .d3r-notes {
+      flex: 1;
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-sm);
+      padding: 14px 14px;
+      font-size: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-self: flex-start;
+      min-width: 170px;
+    }
+    .d3r-notes .n-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+    }
+    .d3r-note-item {
+      border-left: 2px solid var(--border-accent);
+      padding-left: 8px;
+      color: var(--text-primary);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+    .d3r-note-item.warn {
+      border-left-color: var(--border-warn);
+      color: #f4a0a8;
+    }
+    .d3r-note-item .hex {
+      color: var(--accent-cyan);
+      font-size: 9.5px;
+    }
+
+    /* ── The board itself ── */
+    .d3r-board {
+      width: 148px;
+      background: var(--bg-card);          /* #0f3460 */
+      border: 2px solid var(--border-accent); /* #4a90d9 */
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      position: relative;
+      padding: 0;
+    }
+
+    .d3r-display-block {
+      background: #1a3a5e;
+      border-radius: 8px 8px 0 0;
+      border-bottom: 1px solid var(--border-accent);
+      height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      flex-shrink: 0;
+    }
+
+    .d3r-board-body {
+      flex: 1;
+      padding: 8px 4px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+    .d3r-board-label {
+      font-family: var(--sans);
+      font-size: 9.5px;
+      font-weight: 700;
+      color: var(--text-head);
+      text-align: center;
+      line-height: 1.3;
+    }
+    .d3r-board-sub {
+      font-size: 8px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .d3r-usb-block {
+      background: #3a3a4a;
+      border: 1px solid #666;
+      border-radius: 0 0 6px 6px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      color: #999;
+      letter-spacing: 0.04em;
+      flex-shrink: 0;
+    }
+
+    /* ── Pin rows flanking the board ── */
+    /* We position the pin header rows absolutely relative to the board wrapper */
+    .d3r-board-wrap {
+      position: relative;
+      width: 148px;
+    }
+
+    /* Pin label chip on each side of the board */
+    .d3r-pin-row {
+      display: flex;
+      align-items: center;
+      height: 22px;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: #fff;
+      white-space: nowrap;
+    }
+    .d3r-pin-row.left-pin {
+      justify-content: flex-end;
+    }
+    .d3r-pin-row.right-pin {
+      justify-content: flex-start;
+    }
+    .d3r-pin-chip {
+      background: #0a2a50;
+      border: 1px solid var(--border-accent);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 8.5px;
+      color: var(--accent-cyan);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .d3r-pin-chip.pwr {
+      border-color: #fdd835;
+      color: #fdd835;
+    }
+    .d3r-pin-chip.gnd {
+      border-color: #888;
+      color: #aaa;
+    }
+    .d3r-pin-chip.tx {
+      border-color: #42a5f5;
+      color: #42a5f5;
+    }
+    .d3r-pin-label-txt {
+      font-size: 8px;
+      color: var(--text-muted);
+      margin: 0 4px;
+    }
+
+    /* Pull-up tap note */
+    .d3r-pullup-note {
+      font-size: 8px;
+      color: #fdd835;
+      text-align: center;
+      margin-top: 4px;
+      opacity: 0.8;
+      font-family: var(--mono);
+    }
+
+    /* SVG overlay for all D3 wire routing */
+    .d3r-svg-overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 5;
+      overflow: visible;
+    }
+
+    /* Wrapper that holds everything and is the SVG positioning anchor */
+    .d3r-positioner {
+      position: relative;
+    }
+  </style>
+
+  <div class="d3r-positioner" id="d3r-positioner">
+    <div class="d3r-outer" id="d3r-outer">
+
+      <!-- ── LEFT COLUMN: Pack 3 (top) and Pack 4 (bottom) ── -->
+      <div class="d3r-left" id="d3r-left">
+
+        <div class="pack-card" id="d3r-pack3">
+          <div class="pack-id">Pack 3 &nbsp;CYC-8256</div>
+          <div class="pack-wire" id="d3r-p3-green"><div class="pw-dot g"></div>GREEN &rarr; GPIO 17</div>
+          <div class="pack-wire" id="d3r-p3-blue"><div class="pw-dot b"></div>BLUE &rarr; shared TX bus</div>
+          <div class="pack-wire" id="d3r-p3-yellow"><div class="pw-dot y"></div>YELLOW &rarr; GND bus</div>
+        </div>
+
+        <div class="pack-card future" id="d3r-pack4">
+          <div class="pack-id">Pack 4 &nbsp;(future)</div>
+          <div class="pack-wire" id="d3r-p4-green"><div class="pw-dot g"></div>GREEN &rarr; GPIO 18</div>
+          <div class="pack-wire" id="d3r-p4-blue"><div class="pw-dot b"></div>BLUE &rarr; shared TX bus</div>
+          <div class="pack-wire" id="d3r-p4-yellow"><div class="pw-dot y"></div>YELLOW &rarr; GND bus</div>
+        </div>
+
+      </div><!-- /.d3r-left -->
+
+      <!-- ── CENTER COLUMN: board ── -->
+      <div class="d3r-center">
+
+        <!-- LEFT header labels (to the left of the board) -->
+        <!-- These are rendered as a column beside the board using flex -->
+        <div style="display:flex; align-items:stretch; gap:0; width:100%;">
+
+          <!-- Left pin column -->
+          <div id="d3r-left-header" style="display:flex; flex-direction:column; justify-content:center; align-items:flex-end; gap:0; padding-right:4px; padding-top:62px; padding-bottom:18px;">
+            <div class="d3r-pin-row left-pin" id="d3r-lpin-3v3">
+              <span class="d3r-pin-label-txt">3V3</span>
+              <span class="d3r-pin-chip pwr">3V3</span>
+            </div>
+            <div class="d3r-pin-row left-pin" id="d3r-lpin-18">
+              <span class="d3r-pin-label-txt">GPIO 18</span>
+              <span class="d3r-pin-chip">G18</span>
+            </div>
+            <div class="d3r-pin-row left-pin" id="d3r-lpin-17">
+              <span class="d3r-pin-label-txt">GPIO 17</span>
+              <span class="d3r-pin-chip">G17</span>
+            </div>
+            <div class="d3r-pin-row left-pin" id="d3r-lpin-gnd">
+              <span class="d3r-pin-label-txt">GND</span>
+              <span class="d3r-pin-chip gnd">GND</span>
+            </div>
+          </div>
+
+          <!-- The board itself -->
+          <div class="d3r-board" id="d3r-board">
+            <div class="d3r-display-block">1.9&Prime; TFT</div>
+            <div class="d3r-board-body">
+              <div class="d3r-board-label">LILYGO<br>T-Display-S3</div>
+              <div class="d3r-board-sub">ESP32-S3</div>
+            </div>
+            <div class="d3r-usb-block">USB-C</div>
+          </div>
+
+          <!-- Right pin column -->
+          <div id="d3r-right-header" style="display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:0; padding-left:4px; padding-top:62px; padding-bottom:18px;">
+            <div class="d3r-pin-row right-pin" id="d3r-rpin-3v3">
+              <span class="d3r-pin-chip pwr">3V3</span>
+              <span class="d3r-pin-label-txt">3V3</span>
+            </div>
+            <div class="d3r-pin-row right-pin" id="d3r-rpin-16">
+              <span class="d3r-pin-chip">G16</span>
+              <span class="d3r-pin-label-txt">GPIO 16</span>
+            </div>
+            <div class="d3r-pin-row right-pin" id="d3r-rpin-2">
+              <span class="d3r-pin-chip tx">G2</span>
+              <span class="d3r-pin-label-txt">GPIO 2 TX</span>
+            </div>
+            <div class="d3r-pin-row right-pin" id="d3r-rpin-1">
+              <span class="d3r-pin-chip">G1</span>
+              <span class="d3r-pin-label-txt">GPIO 1</span>
+            </div>
+            <div class="d3r-pin-row right-pin" id="d3r-rpin-gnd">
+              <span class="d3r-pin-chip gnd">GND</span>
+              <span class="d3r-pin-label-txt">GND</span>
+            </div>
+          </div>
+
+        </div><!-- flex row -->
+
+        <div class="d3r-pullup-note">&#8593; 3V3 on both headers feeds 1k&#937; pull-ups (dashed tap)</div>
+
+      </div><!-- /.d3r-center -->
+
+      <!-- ── RIGHT COLUMN: Pack 1 (top) + Pack 2 + notes ── -->
+      <div class="d3r-right">
+
+        <div class="d3r-right-packs" id="d3r-right-packs">
+
+          <div class="pack-card" id="d3r-pack1">
+            <div class="pack-id">Pack 1 &nbsp;CYC-8229</div>
+            <div class="pack-wire" id="d3r-p1-green"><div class="pw-dot g"></div>GREEN &rarr; GPIO 1 (UART1 RX)</div>
+            <div class="pack-wire" id="d3r-p1-blue"><div class="pw-dot b"></div>BLUE &rarr; shared TX bus</div>
+            <div class="pack-wire" id="d3r-p1-yellow"><div class="pw-dot y"></div>YELLOW &rarr; GND bus</div>
+          </div>
+
+          <div class="pack-card" id="d3r-pack2">
+            <div class="pack-id">Pack 2 &nbsp;CYC-8246</div>
+            <div class="pack-wire" id="d3r-p2-green"><div class="pw-dot g"></div>GREEN &rarr; GPIO 16 (UART2 RX)</div>
+            <div class="pack-wire" id="d3r-p2-blue"><div class="pw-dot b"></div>BLUE &rarr; shared TX bus</div>
+            <div class="pack-wire" id="d3r-p2-yellow"><div class="pw-dot y"></div>YELLOW &rarr; GND bus</div>
+          </div>
+
+        </div><!-- /.d3r-right-packs -->
+
+        <!-- Notes box -->
+        <div class="d3r-notes">
+          <div class="n-title">System Notes</div>
+
+          <div class="d3r-note-item">
+            9600 baud &nbsp;&middot;&nbsp; 8N1<br>
+            all ports — all packs
+          </div>
+
+          <div class="d3r-note-item">
+            Heartbeat frame (every 5s):<br>
+            <span class="hex">0x3A 0x13 0x01 0x16 0x79</span>
+          </div>
+
+          <div class="d3r-note-item warn">
+            1k&#937; pull-up per GREEN wire<br>
+            to 3.3V &mdash; REQUIRED.<br>
+            BMS TX is open-collector.
+          </div>
+
+          <div class="d3r-note-item warn">
+            Common GND mandatory:<br>
+            all pack GND + ESP32 GND.
+          </div>
+
+          <div class="d3r-note-item" style="border-left-color:var(--accent-orange); color:var(--accent-orange);">
+            GPIO 2 TX drives ALL four<br>
+            pack BLUE pins simultaneously.
+          </div>
+        </div>
+
+      </div><!-- /.d3r-right -->
+
+    </div><!-- /.d3r-outer -->
+
+    <!-- SVG drawn by JS over the whole positioner -->
+    <svg class="d3r-svg-overlay" id="d3r-svg" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- markerUnits=userSpaceOnUse per Charta architecture rule -->
+        <marker id="d3r-arr-g" markerWidth="8" markerHeight="6" refX="7" refY="3"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <polygon points="0 0,8 3,0 6" fill="#66bb6a"/>
+        </marker>
+        <marker id="d3r-arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <polygon points="0 0,8 3,0 6" fill="#42a5f5"/>
+        </marker>
+        <marker id="d3r-arr-y" markerWidth="8" markerHeight="6" refX="7" refY="3"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <polygon points="0 0,8 3,0 6" fill="#ffee58"/>
+        </marker>
+        <marker id="d3r-arr-g-rev" markerWidth="8" markerHeight="6" refX="1" refY="3"
+                orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+          <polygon points="0 3,8 0,8 6" fill="#66bb6a"/>
+        </marker>
+      </defs>
+    </svg>
+
+  </div><!-- /.d3r-positioner -->
+</section>
+
+<p class="gl-gap-notice">GL-003 design system not yet populated &mdash; brief tokens used as fallback. Route to Iris to lock brand palette.</p>
+
+<script>
+// ── Diagram 3 redesign: physical T-Display-S3 orientation
+// Measures bounding boxes relative to #d3r-positioner, then draws SVG wires.
+(function() {
+  var GREEN  = '#66bb6a';
+  var BLUE   = '#42a5f5';
+  var YELLOW = '#ffee58';
+
+  function drawD3R() {
+    var positioner = document.getElementById('d3r-positioner');
+    var svg        = document.getElementById('d3r-svg');
+    if (!positioner || !svg) return;
+
+    // Clear any previously drawn paths (idempotent on resize)
+    while (svg.childNodes.length > 1) { // keep <defs>
+      svg.removeChild(svg.lastChild);
+    }
+
+    var PR = positioner.getBoundingClientRect();
+
+    // Helper: bounding rect relative to positioner
+    function rr(id) {
+      var el = document.getElementById(id);
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return {
+        left:   r.left   - PR.left,
+        right:  r.right  - PR.left,
+        top:    r.top    - PR.top,
+        bottom: r.bottom - PR.top,
+        midY:   (r.top + r.bottom) / 2 - PR.top,
+        midX:   (r.left + r.right) / 2 - PR.left,
+        width:  r.width,
+        height: r.height
+      };
+    }
+
+    // Helper: midY of a wire-row element (the colored dot row)
+    function rowMidY(id) {
+      var el = document.getElementById(id);
+      if (!el) return 0;
+      var r = el.getBoundingClientRect();
+      return (r.top + r.bottom) / 2 - PR.top;
+    }
+
+    // Helper: midY of a pin chip by pin-row id
+    function pinMidY(id) {
+      var el = document.getElementById(id);
+      if (!el) return 0;
+      var r = el.getBoundingClientRect();
+      return (r.top + r.bottom) / 2 - PR.top;
+    }
+
+    function addPath(d, color, dash, markerEnd) {
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('stroke', color);
+      p.setAttribute('stroke-width', '1.8');
+      p.setAttribute('fill', 'none');
+      if (dash) p.setAttribute('stroke-dasharray', '6,3');
+      if (markerEnd) p.setAttribute('marker-end', markerEnd);
+      svg.appendChild(p);
+    }
+
+    function addLine(x1, y1, x2, y2, color, dash, markerEnd) {
+      var l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+      l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+      l.setAttribute('stroke', color);
+      l.setAttribute('stroke-width', '1.8');
+      if (dash) l.setAttribute('stroke-dasharray', '6,3');
+      if (markerEnd) l.setAttribute('marker-end', markerEnd);
+      svg.appendChild(l);
+    }
+
+    function addDot(x, y, color) {
+      var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', y);
+      c.setAttribute('r', 3); c.setAttribute('fill', color);
+      svg.appendChild(c);
+    }
+
+    function addResistor(cx, cy, color) {
+      // Inline resistor symbol: small rectangle
+      var r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      r.setAttribute('x', cx - 12); r.setAttribute('y', cy - 6);
+      r.setAttribute('width', 24); r.setAttribute('height', 12);
+      r.setAttribute('rx', 2);
+      r.setAttribute('fill', '#1a2a1a');
+      r.setAttribute('stroke', color);
+      r.setAttribute('stroke-width', '1.2');
+      svg.appendChild(r);
+      var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', cx); t.setAttribute('y', cy + 4);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-family', "'Courier New',monospace");
+      t.setAttribute('font-size', '7');
+      t.setAttribute('fill', color);
+      t.textContent = '1kΩ';
+      svg.appendChild(t);
+    }
+
+    // ── Measure key elements ──
+    var board   = rr('d3r-board');
+    var lp3v3   = rr('d3r-lpin-3v3');
+    var lp18    = rr('d3r-lpin-18');
+    var lp17    = rr('d3r-lpin-17');
+    var lpGnd   = rr('d3r-lpin-gnd');
+    var rp3v3   = rr('d3r-rpin-3v3');
+    var rp16    = rr('d3r-rpin-16');
+    var rp2     = rr('d3r-rpin-2');
+    var rp1     = rr('d3r-rpin-1');
+    var rpGnd   = rr('d3r-rpin-gnd');
+
+    // Pack wire rows
+    var p3G  = rowMidY('d3r-p3-green');
+    var p3B  = rowMidY('d3r-p3-blue');
+    var p3Y  = rowMidY('d3r-p3-yellow');
+    var p4G  = rowMidY('d3r-p4-green');
+    var p4B  = rowMidY('d3r-p4-blue');
+    var p4Y  = rowMidY('d3r-p4-yellow');
+    var p1G  = rowMidY('d3r-p1-green');
+    var p1B  = rowMidY('d3r-p1-blue');
+    var p1Y  = rowMidY('d3r-p1-yellow');
+    var p2G  = rowMidY('d3r-p2-green');
+    var p2B  = rowMidY('d3r-p2-blue');
+    var p2Y  = rowMidY('d3r-p2-yellow');
+
+    // Pack card right/left edges
+    var pack3R = rr('d3r-pack3'); var pack4R = rr('d3r-pack4');
+    var pack1R = rr('d3r-pack1'); var pack2R = rr('d3r-pack2');
+
+    if (!board || !lp17 || !rp1 || !pack3R || !pack1R) return;
+
+    // Pin chip right/left edges (where wire connects to the board side)
+    // Left header: wire enters from the LEFT of the chip
+    var lhEdge = lp17.left; // chips align left; wire attaches to their left edge
+    // Right header: wire exits from the RIGHT of the chip
+    var rhEdge = rp1.right;
+
+    // Pin Y centres (mid of each chip row)
+    var y_l3v3  = lp3v3 ? lp3v3.midY  : 0;
+    var y_l18   = lp18  ? lp18.midY   : 0;
+    var y_l17   = lp17  ? lp17.midY   : 0;
+    var y_lgnd  = lpGnd ? lpGnd.midY  : 0;
+    var y_r3v3  = rp3v3 ? rp3v3.midY  : 0;
+    var y_r16   = rp16  ? rp16.midY   : 0;
+    var y_r2    = rp2   ? rp2.midY    : 0;
+    var y_r1    = rp1   ? rp1.midY    : 0;
+    var y_rgnd  = rpGnd ? rpGnd.midY  : 0;
+
+    // ── Gap space between pack right edge and board left header chips ──
+    var gapL    = lhEdge - pack3R.right; // pixels of gap on left side
+    var gapR    = pack1R.left - rhEdge;  // pixels of gap on right side
+
+    // Routing bus X positions (left side)
+    // Vertical buses run in the gap between left packs and left header
+    var busGreenLX  = pack3R.right + gapL * 0.40;  // green individual wires merge here
+    var busBlueLX   = pack3R.right + gapL * 0.62;  // blue shared vertical bus
+    var busYellowLX = pack3R.right + gapL * 0.82;  // yellow gnd bus
+
+    // Routing bus X positions (right side)
+    var busGreenRX  = rhEdge + gapR * 0.60;  // green individual wires
+    var busBlueRX   = rhEdge + gapR * 0.38;  // blue shared bus
+    var busYellowRX = rhEdge + gapR * 0.18;  // yellow gnd bus
+
+    // ── LEFT SIDE: Pack 3 & Pack 4 → LEFT header ──
+
+    // Pack 3 GREEN → 1kΩ resistor → GPIO 17 (left header)
+    var resP3GX = pack3R.right + gapL * 0.55;
+    var resP3GY = p3G;
+    addLine(pack3R.right, p3G, resP3GX - 12, p3G, GREEN, false, null);
+    addResistor(resP3GX, resP3GY, GREEN);
+    addPath(
+      'M ' + (resP3GX + 12) + ' ' + p3G +
+      ' L ' + busGreenLX + ' ' + p3G +
+      ' L ' + busGreenLX + ' ' + y_l17 +
+      ' L ' + lhEdge + ' ' + y_l17,
+      GREEN, false, 'url(#d3r-arr-g)'
+    );
+    addDot(busGreenLX, p3G, GREEN);
+
+    // Pack 4 GREEN → 1kΩ resistor → GPIO 18 (left header)
+    var resP4GX = pack4R.right + gapL * 0.55;
+    var resP4GY = p4G;
+    addLine(pack4R.right, p4G, resP4GX - 12, p4G, GREEN, false, null);
+    addResistor(resP4GX, resP4GY, GREEN);
+    addPath(
+      'M ' + (resP4GX + 12) + ' ' + p4G +
+      ' L ' + busGreenLX + ' ' + p4G +
+      ' L ' + busGreenLX + ' ' + y_l18 +
+      ' L ' + lhEdge + ' ' + y_l18,
+      GREEN, false, 'url(#d3r-arr-g)'
+    );
+    addDot(busGreenLX, p4G, GREEN);
+
+    // LEFT YELLOW GND bus: Pack 3 + Pack 4 YELLOW → vertical bus → GND pin
+    addLine(pack3R.right, p3Y, busYellowLX, p3Y, YELLOW, false, null);
+    addDot(busYellowLX, p3Y, YELLOW);
+    addLine(pack4R.right, p4Y, busYellowLX, p4Y, YELLOW, false, null);
+    addDot(busYellowLX, p4Y, YELLOW);
+    // vertical bus
+    addLine(busYellowLX, p3Y, busYellowLX, p4Y, YELLOW, false, null);
+    // bus → left GND pin
+    var yLGndMid = (p3Y + p4Y) / 2;
+    addPath(
+      'M ' + busYellowLX + ' ' + yLGndMid +
+      ' L ' + busYellowLX + ' ' + y_lgnd +
+      ' L ' + lhEdge + ' ' + y_lgnd,
+      YELLOW, false, 'url(#d3r-arr-y)'
+    );
+    addDot(busYellowLX, yLGndMid, YELLOW);
+
+    // LEFT BLUE: Pack 3 + Pack 4 BLUE → left blue bus → route under board to right blue bus → GPIO 2
+    // (Blue wires merge on left side, then travel under the board to GPIO 2 on the right)
+    addLine(pack3R.right, p3B, busBlueLX, p3B, BLUE, true, null);
+    addDot(busBlueLX, p3B, BLUE);
+    addLine(pack4R.right, p4B, busBlueLX, p4B, BLUE, true, null);
+    addDot(busBlueLX, p4B, BLUE);
+    // vertical bus left side
+    addLine(busBlueLX, p3B, busBlueLX, p4B, BLUE, false, null);
+
+    // ── RIGHT SIDE: Pack 1 & Pack 2 → RIGHT header ──
+
+    // Pack 1 GREEN → 1kΩ resistor → GPIO 1 (right header)
+    var resP1GX = pack1R.left - gapR * 0.55;
+    var resP1GY = p1G;
+    addLine(pack1R.left, p1G, resP1GX + 12, p1G, GREEN, false, null);
+    addResistor(resP1GX, resP1GY, GREEN);
+    addPath(
+      'M ' + (resP1GX - 12) + ' ' + p1G +
+      ' L ' + busGreenRX + ' ' + p1G +
+      ' L ' + busGreenRX + ' ' + y_r1 +
+      ' L ' + rhEdge + ' ' + y_r1,
+      GREEN, false, 'url(#d3r-arr-g-rev)'
+    );
+    addDot(busGreenRX, p1G, GREEN);
+
+    // Pack 2 GREEN → 1kΩ resistor → GPIO 16 (right header)
+    var resP2GX = pack2R.left - gapR * 0.55;
+    var resP2GY = p2G;
+    addLine(pack2R.left, p2G, resP2GX + 12, p2G, GREEN, false, null);
+    addResistor(resP2GX, resP2GY, GREEN);
+    addPath(
+      'M ' + (resP2GX - 12) + ' ' + p2G +
+      ' L ' + busGreenRX + ' ' + p2G +
+      ' L ' + busGreenRX + ' ' + y_r16 +
+      ' L ' + rhEdge + ' ' + y_r16,
+      GREEN, false, 'url(#d3r-arr-g-rev)'
+    );
+    addDot(busGreenRX, p2G, GREEN);
+
+    // RIGHT YELLOW GND bus: Pack 1 + Pack 2 YELLOW → vertical bus → right GND pin
+    addLine(pack1R.left, p1Y, busYellowRX, p1Y, YELLOW, false, null);
+    addDot(busYellowRX, p1Y, YELLOW);
+    addLine(pack2R.left, p2Y, busYellowRX, p2Y, YELLOW, false, null);
+    addDot(busYellowRX, p2Y, YELLOW);
+    addLine(busYellowRX, p1Y, busYellowRX, p2Y, YELLOW, false, null);
+    var yRGndMid = (p1Y + p2Y) / 2;
+    addPath(
+      'M ' + busYellowRX + ' ' + yRGndMid +
+      ' L ' + busYellowRX + ' ' + y_rgnd +
+      ' L ' + rhEdge + ' ' + y_rgnd,
+      YELLOW, false, 'url(#d3r-arr-y)'
+    );
+    addDot(busYellowRX, yRGndMid, YELLOW);
+
+    // RIGHT BLUE bus: Pack 1 + Pack 2 BLUE → right blue bus
+    addLine(pack1R.left, p1B, busBlueRX, p1B, BLUE, true, null);
+    addDot(busBlueRX, p1B, BLUE);
+    addLine(pack2R.left, p2B, busBlueRX, p2B, BLUE, true, null);
+    addDot(busBlueRX, p2B, BLUE);
+    addLine(busBlueRX, p1B, busBlueRX, p2B, BLUE, false, null);
+
+    // ── BLUE shared bus: GPIO 2 (right header) feeds ALL four packs ──
+    // Run: GPIO 2 pin right edge → right blue bus → under board →
+    //       horizontal run below board → left blue bus → left packs
+
+    var boardBottom = board.bottom + 10; // route below board
+
+    // GPIO 2 right edge → busBlueRX → down to rail below board
+    addPath(
+      'M ' + rhEdge + ' ' + y_r2 +
+      ' L ' + busBlueRX + ' ' + y_r2 +
+      ' L ' + busBlueRX + ' ' + boardBottom,
+      BLUE, false, null
+    );
+    addDot(busBlueRX, y_r2, BLUE);
+
+    // Horizontal rail below board from right bus to left bus
+    addLine(busBlueRX, boardBottom, busBlueLX, boardBottom, BLUE, false, null);
+
+    // Left bus from rail up to left packs
+    addLine(busBlueLX, boardBottom, busBlueLX, p3B, BLUE, false, null);
+    addDot(busBlueLX, boardBottom, BLUE);
+
+    // Right bus from rail up to right packs
+    addLine(busBlueRX, boardBottom, busBlueRX, p1B, BLUE, false, null);
+    addDot(busBlueRX, p2B, BLUE);
+
+    // ── 3V3 pull-up dashed tap lines (from 3V3 pins to bus approach points) ──
+    // Left 3V3 → dashed tap toward busGreenLX (showing pull-up supply)
+    var lPullX = busGreenLX + 8;
+    addLine(lhEdge, y_l3v3, lPullX, y_l3v3, YELLOW, true, null);
+    addDot(lPullX, y_l3v3, YELLOW);
+    // Right 3V3 → dashed tap toward busGreenRX
+    var rPullX = busGreenRX - 8;
+    addLine(rhEdge, y_r3v3, rPullX, y_r3v3, YELLOW, true, null);
+    addDot(rPullX, y_r3v3, YELLOW);
+  }
+
+  // Run after layout settles; re-run once more in case fonts affect height
+  function schedule() {
+    setTimeout(drawD3R, 80);
+    setTimeout(drawD3R, 300);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', schedule);
+  } else {
+    schedule();
+  }
+})();
+
+// ── Diagram 2: draw FTDI wires via JS measurement ──
+(function() {
+  function drawD2() {
+    const svg     = document.getElementById('d2-svg');
+    const svgWrap = svg.parentElement;
+    const wrapR   = svgWrap.getBoundingClientRect();
+
+    function midY(id) {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return (r.top + r.bottom) / 2 - wrapR.top;
+    }
+    function rightX(id) {
+      return document.getElementById(id).getBoundingClientRect().right - wrapR.left;
+    }
+    function leftX(id) {
+      return document.getElementById(id).getBoundingClientRect().left - wrapR.left;
+    }
+
+    const svgW = wrapR.width;
+
+    // Source Y positions (pack side, right edge)
+    const packRight = rightX('d2-pack');
+    const yGnd  = midY('d2-p-gnd');
+    const yTx   = midY('d2-p-tx');
+    const yRx   = midY('d2-p-rx');
+
+    // Target Y positions (FTDI side, left edge)
+    const ftdiLeft = leftX('d2-ftdi');
+    const yFGnd = midY('d2-f-gnd');
+    const yFVcc = midY('d2-f-vcc');
+    const yFRx  = midY('d2-f-rx');
+    const yFTx  = midY('d2-f-tx');
+
+    const x0 = packRight + 2;
+    const x1 = ftdiLeft - 2;
+    const midX = (x0 + x1) / 2;
+
+    function path(d, color, dash, marker) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+      p.setAttribute('d', d); p.setAttribute('stroke', color);
+      p.setAttribute('stroke-width','2'); p.setAttribute('fill','none');
+      if (dash) p.setAttribute('stroke-dasharray','5,3');
+      if (marker) p.setAttribute('marker-end', marker);
+      svg.appendChild(p);
+    }
+    function line(x1,y1,x2,y2,color,dash,marker) {
+      const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+      l.setAttribute('x1',x1);l.setAttribute('y1',y1);
+      l.setAttribute('x2',x2);l.setAttribute('y2',y2);
+      l.setAttribute('stroke',color);l.setAttribute('stroke-width','2');
+      if (dash) l.setAttribute('stroke-dasharray','5,3');
+      if (marker) l.setAttribute('marker-end',marker);
+      svg.appendChild(l);
+    }
+    function text(x,y,str,color,anchor) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x',x);t.setAttribute('y',y);
+      t.setAttribute('fill',color||'#fff');
+      t.setAttribute('font-family',"'Courier New',monospace");
+      t.setAttribute('font-size','9');
+      t.setAttribute('text-anchor',anchor||'middle');
+      t.textContent=str; svg.appendChild(t);
+    }
+    function dot(x,y,color) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r','3');
+      c.setAttribute('fill',color); svg.appendChild(c);
+    }
+    function rect(x,y,w,h,fill,stroke) {
+      const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',w);r.setAttribute('height',h);
+      r.setAttribute('rx','2');r.setAttribute('fill',fill);r.setAttribute('stroke',stroke);
+      r.setAttribute('stroke-width','1.5'); svg.appendChild(r);
+    }
+
+    // YELLOW: GND straight across with elbow if heights differ
+    path(`M ${x0} ${yGnd} L ${midX} ${yGnd} L ${midX} ${yFGnd} L ${x1} ${yFGnd}`,
+         '#ffee58', false, 'url(#arr-y)');
+    text(midX, yGnd - 5, 'GND', '#ffee58');
+
+    // GREEN: BMS TX → 1kΩ → FTDI RX, with pull-up tap to VCC
+    const resX = midX - 15;
+    const resY1 = Math.min(yTx, yFRx);
+    const resYmid = (yTx + yFRx) / 2;
+    // line from pack to resistor
+    path(`M ${x0} ${yTx} L ${resX} ${yTx} L ${resX} ${resYmid}`,
+         '#66bb6a', false, null);
+    // resistor symbol
+    rect(resX - 15, resYmid - 8, 30, 16, '#1a2a1a', '#66bb6a');
+    text(resX, resYmid + 4, '1kΩ', '#81c784');
+    // line from resistor to FTDI RX
+    path(`M ${resX} ${resYmid + 8} L ${resX} ${yFRx} L ${x1} ${yFRx}`,
+         '#66bb6a', false, 'url(#arr-g)');
+    dot(resX, resYmid, '#66bb6a');
+    // pull-up tap: dashed line up to VCC
+    line(resX, resYmid - 8, resX, yFVcc, '#66bb6a', true, null);
+    dot(resX, yFVcc, '#66bb6a');
+    text(resX - 2, yFVcc - 6, '3.3V pull-up', '#66bb6a');
+
+    // BLUE: BMS RX → FTDI TX
+    path(`M ${x0} ${yRx} L ${midX + 20} ${yRx} L ${midX + 20} ${yFTx} L ${x1} ${yFTx}`,
+         '#42a5f5', false, 'url(#arr-b)');
+    text(midX + 20, yRx - 5, 'heartbeat TX', '#42a5f5');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', drawD2);
+  } else {
+    setTimeout(drawD2, 80);
+  }
+})();
+</script>
+</body>
+</html>

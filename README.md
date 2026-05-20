@@ -26,4 +26,8 @@ Telemetry logger and diagnostic display for up to four Ruipu/Okai 10S4P battery 
 ## Docs
 
 - `docs/Brief.md` — original design brief
-- `docs/UART_Topology.md` — wiring reference
+- `docs/UART_Topology.md` — port/GPIO assignment
+- `docs/Board_Wiring.md` — physical wiring, pull-ups, switch wiring
+- `docs/Protocol_Notes.md` — BMS protocol observations, heartbeat, 0x2020 artifact, FTDI bench tap
+- `docs/Pack_Registry.md` — CYC fingerprint registry, fleet health snapshot, ID procedure
+- `docs/connector-pinout.html` — interactive wiring diagrams (3 diagrams, open in browser)
