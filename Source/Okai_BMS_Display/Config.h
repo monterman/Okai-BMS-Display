@@ -129,6 +129,8 @@ struct PackRecord {
 
 // ─── Cross-file globals ───────────────────────────────────────────────────────
 extern PackData   packs[NUM_PACKS];    // UART.ino
+extern float      g_ridePowerEma_W;    // UART.ino — EMA fleet discharge power
+extern uint8_t    g_ridePowerN;        // UART.ino — warmup counter (< 3 = not ready)
 extern bool     wifiActive;          // WiFiServer.ino
 extern bool     fsReady;             // Logger.ino
 

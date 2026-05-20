@@ -11,7 +11,10 @@
 #include "OkaiBMS.h"
 
 static SoftwareSerial _ss3, _ss4;
-static bool _wasValid[NUM_PACKS];
+static bool  _wasValid[NUM_PACKS];
+
+float   g_ridePowerEma_W = 0.0f;   // EMA of fleet discharge power (W)
+uint8_t g_ridePowerN     = 0;       // sample count; < 3 means warming up
 
 // Global — shared with Heartbeat.ino
 OkaiBMS pack[NUM_PACKS] = {
@@ -79,5 +82,30 @@ void uartLoop() {
         // Rising edge: pack just appeared → identify against registry
         if (!_wasValid[i] && packs[i].valid) packRegistryIdentify(i);
         _wasValid[i] = packs[i].valid;
+    }
+
+    // ── Ride power EMA — resets on each new session, updates while discharging ─
+    static LogMode _prvMode = LOG_IDLE;
+    LogMode _curMode = logCurrentMode();
+    if (_curMode == LOG_RIDE && _prvMode != LOG_RIDE) {
+        g_ridePowerEma_W = 0.0f;
+        g_ridePowerN     = 0;
+    }
+    _prvMode = _curMode;
+    if (_curMode == LOG_RIDE) {
+        float totalW = 0.0f;
+        bool  any    = false;
+        for (uint8_t j = 0; j < NUM_PACKS; j++) {
+            if (packs[j].valid && packs[j].current < -LOG_RIDE_THRESHOLD_A) {
+                totalW += packs[j].voltage * (-packs[j].current);
+                any = true;
+            }
+        }
+        if (any) {
+            const float ALPHA = 0.10f;
+            if (g_ridePowerN < 255) g_ridePowerN++;
+            g_ridePowerEma_W = (g_ridePowerN == 1) ? totalW
+                             : ALPHA * totalW + (1.0f - ALPHA) * g_ridePowerEma_W;
+        }
     }
 }

@@ -266,8 +266,18 @@ static void drawScreenFleet() {
             totalAh += (packs[j].soc / 100.0f) * PACK_DESIGN_AH;
             n++;
         }
-        char fs[36];
-        snprintf(fs, sizeof(fs), "%uP fleet: ~%.0f Wh / %.1f Ah", n, totalWh, totalAh);
+        char fs[48];
+        if (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f) {
+            uint16_t mins = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
+            if (mins >= 60)
+                snprintf(fs, sizeof(fs), "~%uh%02um  %uP: %.0fWh / %.1fAh",
+                         mins/60, mins%60, n, totalWh, totalAh);
+            else
+                snprintf(fs, sizeof(fs), "~%u min  %uP: %.0fWh / %.1fAh",
+                         mins, n, totalWh, totalAh);
+        } else {
+            snprintf(fs, sizeof(fs), "%uP fleet: %.0f Wh / %.1f Ah", n, totalWh, totalAh);
+        }
         _gfx->setTextSize(1);
         _gfx->setTextColor(C_GOOD);
         _gfx->setCursor(2, 162);
@@ -393,59 +403,89 @@ static void drawScreenDetail() {
     drawPageDots();
 }
 
-// ── Screen 2a: Ride Energy — fleet Wh/mAh remaining ──────────────────────────
+// ── Screen 2a: Ride Energy — time left + fleet Wh/mAh ────────────────────────
 static void drawScreenRideEnergy() {
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
 
-    _gfx->setTextSize(1);
-    _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(4, 20);
-    _gfx->print("FLEET ENERGY (RIDING)");
-
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 32);
-    _gfx->print("Pack  SoC    Wh avail     mAh avail");
-
+    // Fleet totals
     float totalWh = 0.0f, totalMah = 0.0f;
     uint8_t n = 0;
-
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        uint16_t ry = 44 + i * 18;
+        if (!packs[i].valid) continue;
+        totalWh  += (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+        totalMah += (packs[i].soc / 100.0f) * PACK_DESIGN_AH * 1000.0f;
+        n++;
+    }
+
+    // ── Big time estimate (textSize 2 = 16 px tall) ──────────────────────────
+    char timeStr[20];
+    bool ready = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+    if (!ready) {
+        strcpy(timeStr, "~-- min left");
+        _gfx->setTextColor(C_DIM);
+    } else {
+        uint16_t mins = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
+        if (mins >= 60)
+            snprintf(timeStr, sizeof(timeStr), "~%uh%02um left", mins/60, mins%60);
+        else
+            snprintf(timeStr, sizeof(timeStr), "~%u min left", mins);
+        _gfx->setTextColor(C_GOOD);
+    }
+    _gfx->setTextSize(2);
+    _gfx->setCursor(4, 22);
+    _gfx->print(timeStr);
+
+    // Avg power note
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(4, 42);
+    if (ready) {
+        char pw[32];
+        snprintf(pw, sizeof(pw), "@ %.0f W avg (%u samples)", g_ridePowerEma_W, (unsigned)g_ridePowerN);
+        _gfx->print(pw);
+    } else {
+        _gfx->print("(measuring power draw...)");
+    }
+
+    // Column headers
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(4, 54);
+    _gfx->print("Pack  SoC    Wh avail    mAh avail");
+
+    // Per-pack rows
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        uint16_t ry = 64 + i * 16;
         _gfx->setCursor(4, ry);
         if (!packs[i].valid) {
             _gfx->setTextColor(C_DIM);
-            char row[36];
-            snprintf(row, sizeof(row), "P%u   ---      ---          ---", i+1);
+            char row[36]; snprintf(row, sizeof(row), "P%u   ---     ---         ---", i+1);
             _gfx->print(row);
             continue;
         }
         float wh  = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
         float mah = (packs[i].soc / 100.0f) * PACK_DESIGN_AH * 1000.0f;
-        totalWh  += wh;
-        totalMah += mah;
-        n++;
         char row[40];
-        snprintf(row, sizeof(row), "P%u  %3u%%  %6.0f Wh  %7.0f mAh",
+        snprintf(row, sizeof(row), "P%u  %3u%%  %5.0f Wh  %6.0f mAh",
                  i+1, (unsigned)packs[i].soc, wh, mah);
         _gfx->setTextColor(C_TEXT);
         _gfx->print(row);
     }
 
-    // Fleet total
-    char tot[44];
-    snprintf(tot, sizeof(tot), "Total (%uP):  %.0f Wh    %.0f mAh",
+    // Fleet total — y = 64 + 4*16 = 128
+    char tot[48];
+    snprintf(tot, sizeof(tot), "Fleet (%uP): %.0f Wh  /  %.0f mAh",
              n, totalWh, totalMah);
     _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(4, 120);
+    _gfx->setCursor(4, 130);
     _gfx->print(tot);
 
-    // Design capacity reference
-    char des[44];
-    snprintf(des, sizeof(des), "Design (%uP): %.0f Wh  %.0f mAh",
+    // Design reference
+    char des[48];
+    snprintf(des, sizeof(des), "Design(%uP): %.0f Wh  /  %.0f mAh",
              n, n * PACK_DESIGN_WH, n * PACK_DESIGN_AH * 1000.0f);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 134);
+    _gfx->setCursor(4, 144);
     _gfx->print(des);
 
     drawPageDots();
