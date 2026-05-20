@@ -238,11 +238,11 @@ static void drawFleetCell(uint8_t i) {
     snprintf(ln2, sizeof(ln2), "d%umV  %u*C", dmv, (unsigned)packs[i].maxTemp);
     _gfx->print(ln2);
 
-    // Charge cycles
-    _gfx->setTextColor(C_DIM);
+    // CYC fingerprint — unique pack identity
+    _gfx->setTextColor(C_ACCENT);
     _gfx->setCursor(cx + 4, cy + 62);
-    char ln3[18];
-    snprintf(ln3, sizeof(ln3), "#%u cycles", (unsigned)packs[i].cycles);
+    char ln3[14];
+    snprintf(ln3, sizeof(ln3), "CYC-%u", (unsigned)packs[i].cycles);
     _gfx->print(ln3);
 }
 
@@ -338,7 +338,7 @@ static void drawScreenDetail() {
     // Cycles | SoH vs new BD — textSize 1
     uint8_t soh = sohEstimate(i);
     char c_s[14], soh_s[16];
-    snprintf(c_s,   sizeof(c_s),   "#%u cyc", (unsigned)packs[i].cycles);
+    snprintf(c_s,   sizeof(c_s),   "CYC-%u", (unsigned)packs[i].cycles);
     snprintf(soh_s, sizeof(soh_s), "SoH %u%% vs new", (unsigned)soh);
     _gfx->setTextColor(C_DIM);
     _gfx->setCursor(4, 132);  _gfx->print(c_s);
@@ -474,7 +474,7 @@ static void drawScreenHealth() {
     // Column headers
     _gfx->setTextColor(C_DIM);
     _gfx->setCursor(4, 32);
-    _gfx->print("Pack  dV-mV  Cyc   SoH  Avail.Wh  Status");
+    _gfx->print("Pack  dV-mV  CYC#  SoH  Avail.Wh  Status");
 
     uint8_t worstPack = 0xFF;
     uint8_t lowestSoH = 255;
