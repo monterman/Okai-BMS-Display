@@ -251,38 +251,176 @@ static void drawFleetCell(uint8_t i) {
     _gfx->print(ln3);
 }
 
+// ── Empty-cell summary helpers ────────────────────────────────────────────────
+
+static void _summaryTimeStr(char* out, size_t len, float totalWh) {
+    bool riding = (logCurrentMode() == LOG_RIDE);
+    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+    if (!riding)  { snprintf(out, len, "Fleet info"); return; }
+    if (!ready)   { snprintf(out, len, "~-- min");    return; }
+    uint16_t m = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
+    if (m >= 60) snprintf(out, len, "~%uh%02um", m/60, m%60);
+    else         snprintf(out, len, "~%u min",   m);
+}
+
+// Wide panel — fills a full 320px row (both cells in a row empty)
+static void _drawSummaryWide(uint16_t ry, uint8_t nValid,
+                              float totalWh, float totalAh) {
+    bool riding = (logCurrentMode() == LOG_RIDE);
+    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+
+    _gfx->fillRect(0, ry, 320, CELL_H, C_BG);
+    _gfx->drawRect(0, ry, 320, CELL_H, C_ACCENT);
+    _gfx->drawRect(1, ry+1, 318, CELL_H-2, C_ACCENT);
+
+    // Left half — time estimate
+    char ts[16]; _summaryTimeStr(ts, sizeof(ts), totalWh);
+    _gfx->setTextSize(2);
+    _gfx->setTextColor(riding && ready ? C_GOOD : (riding ? C_DIM : C_ACCENT));
+    _gfx->setCursor(6, ry + 4);
+    _gfx->print(ts);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(6, ry + 26);
+    if (riding && ready) {
+        char pw[30];
+        snprintf(pw, sizeof(pw), "@ %.0f W avg (%u samples)", g_ridePowerEma_W, (unsigned)g_ridePowerN);
+        _gfx->print(pw);
+    } else if (riding) {
+        _gfx->print("(measuring power draw...)");
+    } else {
+        _gfx->print("start riding for estimate");
+    }
+
+    // Divider
+    _gfx->drawFastVLine(160, ry + 6, CELL_H - 12, C_DIM);
+
+    // Right half — capacity breakdown
+    _gfx->setTextColor(C_ACCENT);
+    _gfx->setCursor(166, ry + 4);
+    char hdr[16]; snprintf(hdr, sizeof(hdr), "%uP capacity:", nValid);
+    _gfx->print(hdr);
+
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(166, ry + 16);
+    char wh[20]; snprintf(wh, sizeof(wh), "%.0f Wh left", totalWh);
+    _gfx->print(wh);
+
+    _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(166, ry + 28);
+    char mah[22]; snprintf(mah, sizeof(mah), "%.0f mAh left", totalAh * 1000.0f);
+    _gfx->print(mah);
+
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(166, ry + 40);
+    char des[32];
+    snprintf(des, sizeof(des), "Design: %.0fWh/%.0fmAh",
+             nValid * PACK_DESIGN_WH, nValid * PACK_DESIGN_AH * 1000.0f);
+    _gfx->print(des);
+
+    uint16_t sumSoc = 0;
+    for (uint8_t j = 0; j < NUM_PACKS; j++) if (packs[j].valid) sumSoc += packs[j].soc;
+    _gfx->setCursor(166, ry + 54);
+    char av[16]; snprintf(av, sizeof(av), "avg SoC: %u%%", nValid ? sumSoc/nValid : 0);
+    _gfx->print(av);
+}
+
+// Narrow panel — fills one 160×73 cell slot
+static void _drawSummaryNarrow(uint16_t cx, uint16_t cy, uint8_t nValid,
+                                float totalWh, float totalAh) {
+    bool riding = (logCurrentMode() == LOG_RIDE);
+    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+
+    _gfx->fillRect(cx, cy, CELL_W, CELL_H, C_BG);
+    _gfx->drawRect(cx, cy, CELL_W, CELL_H, C_ACCENT);
+    _gfx->drawRect(cx+1, cy+1, CELL_W-2, CELL_H-2, C_ACCENT);
+
+    char ts[16]; _summaryTimeStr(ts, sizeof(ts), totalWh);
+    _gfx->setTextSize(2);
+    _gfx->setTextColor(riding && ready ? C_GOOD : (riding ? C_DIM : C_ACCENT));
+    _gfx->setCursor(cx + 4, cy + 4);
+    _gfx->print(ts);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(cx + 4, cy + 28);
+    char wh[18]; snprintf(wh, sizeof(wh), "%.0f Wh left", totalWh);
+    _gfx->print(wh);
+
+    _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(cx + 4, cy + 40);
+    char mah[20]; snprintf(mah, sizeof(mah), "%.0f mAh", totalAh * 1000.0f);
+    _gfx->print(mah);
+
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(cx + 4, cy + 54);
+    if (riding && ready) {
+        char pw[16]; snprintf(pw, sizeof(pw), "@ %.0fW avg", g_ridePowerEma_W);
+        _gfx->print(pw);
+    } else {
+        char np[14]; snprintf(np, sizeof(np), "%uP of %u ports", nValid, NUM_PACKS);
+        _gfx->print(np);
+    }
+}
+
+// ── Screen 0: Fleet overview with adaptive empty-cell summary ─────────────────
 static void drawScreenFleet() {
     drawHeader();
-    for (uint8_t i = 0; i < NUM_PACKS; i++) drawFleetCell(i);
-    _gfx->fillRect(0, HDR_H + 2 * CELL_H, 320, 170 - (HDR_H + 2 * CELL_H), C_BG);
 
-    // Bottom strip: fleet energy total while riding, dots shifted right
-    if (logCurrentMode() == LOG_RIDE) {
-        float totalWh = 0.0f, totalAh = 0.0f;
-        uint8_t n = 0;
-        for (uint8_t j = 0; j < NUM_PACKS; j++) {
-            if (!packs[j].valid) continue;
-            totalWh += (packs[j].soc / 100.0f) * PACK_DESIGN_WH;
-            totalAh += (packs[j].soc / 100.0f) * PACK_DESIGN_AH;
-            n++;
+    // Compute fleet totals once — shared by cells and summary panels
+    float totalWh = 0.0f, totalAh = 0.0f;
+    uint8_t nValid = 0;
+    for (uint8_t j = 0; j < NUM_PACKS; j++) {
+        if (!packs[j].valid) continue;
+        totalWh += (packs[j].soc / 100.0f) * PACK_DESIGN_WH;
+        totalAh += (packs[j].soc / 100.0f) * PACK_DESIGN_AH;
+        nValid++;
+    }
+
+    // Draw valid pack cells
+    for (uint8_t i = 0; i < NUM_PACKS; i++)
+        if (packs[i].valid) drawFleetCell(i);
+
+    // Fill empty cell space with fleet summary
+    if (nValid == 0) {
+        _gfx->fillRect(0, HDR_H, 320, 2 * CELL_H, C_BG);
+        _gfx->setTextSize(2); _gfx->setTextColor(C_DIM);
+        _gfx->setCursor(72, 84); _gfx->print("No packs");
+    } else if (nValid < NUM_PACKS) {
+        bool e0 = !packs[0].valid, e1 = !packs[1].valid;
+        bool e2 = !packs[2].valid, e3 = !packs[3].valid;
+
+        if (e2 && e3 && !e0 && !e1) {
+            _drawSummaryWide(CY[2], nValid, totalWh, totalAh);   // bottom row free
+        } else if (e0 && e1 && !e2 && !e3) {
+            _drawSummaryWide(CY[0], nValid, totalWh, totalAh);   // top row free
+        } else {
+            // Mixed or single empty — narrow panel per empty slot
+            for (uint8_t i = 0; i < NUM_PACKS; i++)
+                if (!packs[i].valid)
+                    _drawSummaryNarrow(CX[i], CY[i], nValid, totalWh, totalAh);
         }
+    }
+
+    // Bottom strip + page dots
+    _gfx->fillRect(0, HDR_H + 2 * CELL_H, 320, 170 - (HDR_H + 2 * CELL_H), C_BG);
+    if (logCurrentMode() == LOG_RIDE && nValid > 0) {
         char fs[48];
-        if (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f) {
+        bool ready = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+        if (ready) {
             uint16_t mins = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
             if (mins >= 60)
                 snprintf(fs, sizeof(fs), "~%uh%02um  %uP: %.0fWh / %.1fAh",
-                         mins/60, mins%60, n, totalWh, totalAh);
+                         mins/60, mins%60, nValid, totalWh, totalAh);
             else
                 snprintf(fs, sizeof(fs), "~%u min  %uP: %.0fWh / %.1fAh",
-                         mins, n, totalWh, totalAh);
+                         mins, nValid, totalWh, totalAh);
         } else {
-            snprintf(fs, sizeof(fs), "%uP fleet: %.0f Wh / %.1f Ah", n, totalWh, totalAh);
+            snprintf(fs, sizeof(fs), "%uP fleet: %.0f Wh / %.1f Ah", nValid, totalWh, totalAh);
         }
-        _gfx->setTextSize(1);
-        _gfx->setTextColor(C_GOOD);
-        _gfx->setCursor(2, 162);
-        _gfx->print(fs);
-        // Page dots shifted to far right so they don't overlap the text
+        _gfx->setTextSize(1); _gfx->setTextColor(C_GOOD);
+        _gfx->setCursor(2, 162); _gfx->print(fs);
         for (uint8_t d = 0; d < NUM_SCREENS; d++) {
             uint16_t dx = 264 + d * 12;
             if (d == _screen) _gfx->fillCircle(dx, DOT_Y, 3, C_ACCENT);
