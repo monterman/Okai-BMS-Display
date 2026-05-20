@@ -238,11 +238,16 @@ static void drawFleetCell(uint8_t i) {
     snprintf(ln2, sizeof(ln2), "d%umV  %u*C", dmv, (unsigned)packs[i].maxTemp);
     _gfx->print(ln2);
 
-    // CYC fingerprint — unique pack identity
+    // Bottom line: Wh remaining during ride, CYC fingerprint otherwise
     _gfx->setTextColor(C_ACCENT);
     _gfx->setCursor(cx + 4, cy + 62);
-    char ln3[14];
-    snprintf(ln3, sizeof(ln3), "CYC-%u", (unsigned)packs[i].cycles);
+    char ln3[16];
+    if (logCurrentMode() == LOG_RIDE) {
+        float avWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+        snprintf(ln3, sizeof(ln3), "~%.0f Wh avail", avWh);
+    } else {
+        snprintf(ln3, sizeof(ln3), "CYC-%u", (unsigned)packs[i].cycles);
+    }
     _gfx->print(ln3);
 }
 
@@ -250,7 +255,32 @@ static void drawScreenFleet() {
     drawHeader();
     for (uint8_t i = 0; i < NUM_PACKS; i++) drawFleetCell(i);
     _gfx->fillRect(0, HDR_H + 2 * CELL_H, 320, 170 - (HDR_H + 2 * CELL_H), C_BG);
-    drawPageDots();
+
+    // Bottom strip: fleet energy total while riding, dots shifted right
+    if (logCurrentMode() == LOG_RIDE) {
+        float totalWh = 0.0f, totalAh = 0.0f;
+        uint8_t n = 0;
+        for (uint8_t j = 0; j < NUM_PACKS; j++) {
+            if (!packs[j].valid) continue;
+            totalWh += (packs[j].soc / 100.0f) * PACK_DESIGN_WH;
+            totalAh += (packs[j].soc / 100.0f) * PACK_DESIGN_AH;
+            n++;
+        }
+        char fs[36];
+        snprintf(fs, sizeof(fs), "%uP fleet: ~%.0f Wh / %.1f Ah", n, totalWh, totalAh);
+        _gfx->setTextSize(1);
+        _gfx->setTextColor(C_GOOD);
+        _gfx->setCursor(2, 162);
+        _gfx->print(fs);
+        // Page dots shifted to far right so they don't overlap the text
+        for (uint8_t d = 0; d < NUM_SCREENS; d++) {
+            uint16_t dx = 264 + d * 12;
+            if (d == _screen) _gfx->fillCircle(dx, DOT_Y, 3, C_ACCENT);
+            else              _gfx->drawCircle(dx, DOT_Y, 3, C_DIM);
+        }
+    } else {
+        drawPageDots();
+    }
 }
 
 // ── Screen 1: Per-pack Detail ─────────────────────────────────────────────────
@@ -363,8 +393,67 @@ static void drawScreenDetail() {
     drawPageDots();
 }
 
+// ── Screen 2a: Ride Energy — fleet Wh/mAh remaining ──────────────────────────
+static void drawScreenRideEnergy() {
+    _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
+    drawHeader();
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_ACCENT);
+    _gfx->setCursor(4, 20);
+    _gfx->print("FLEET ENERGY (RIDING)");
+
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(4, 32);
+    _gfx->print("Pack  SoC    Wh avail     mAh avail");
+
+    float totalWh = 0.0f, totalMah = 0.0f;
+    uint8_t n = 0;
+
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        uint16_t ry = 44 + i * 18;
+        _gfx->setCursor(4, ry);
+        if (!packs[i].valid) {
+            _gfx->setTextColor(C_DIM);
+            char row[36];
+            snprintf(row, sizeof(row), "P%u   ---      ---          ---", i+1);
+            _gfx->print(row);
+            continue;
+        }
+        float wh  = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+        float mah = (packs[i].soc / 100.0f) * PACK_DESIGN_AH * 1000.0f;
+        totalWh  += wh;
+        totalMah += mah;
+        n++;
+        char row[40];
+        snprintf(row, sizeof(row), "P%u  %3u%%  %6.0f Wh  %7.0f mAh",
+                 i+1, (unsigned)packs[i].soc, wh, mah);
+        _gfx->setTextColor(C_TEXT);
+        _gfx->print(row);
+    }
+
+    // Fleet total
+    char tot[44];
+    snprintf(tot, sizeof(tot), "Total (%uP):  %.0f Wh    %.0f mAh",
+             n, totalWh, totalMah);
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(4, 120);
+    _gfx->print(tot);
+
+    // Design capacity reference
+    char des[44];
+    snprintf(des, sizeof(des), "Design (%uP): %.0f Wh  %.0f mAh",
+             n, n * PACK_DESIGN_WH, n * PACK_DESIGN_AH * 1000.0f);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(4, 134);
+    _gfx->print(des);
+
+    drawPageDots();
+}
+
 // ── Screen 2: Charging Live ───────────────────────────────────────────────────
 static void drawScreenCharging() {
+    if (logCurrentMode() == LOG_RIDE) { drawScreenRideEnergy(); return; }
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
 
