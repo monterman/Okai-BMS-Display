@@ -1,4 +1,4 @@
-// UART.ino — serial port init, RuipuBattery instances, pack polling
+// UART.ino — serial port init, OkaiBMS instances, pack polling
 //
 // Pack 1: Hardware UART1  RX=GPIO1  TX=GPIO2  (shared TX bus)
 // Pack 2: Hardware UART2  RX=GPIO16 TX=GPIO2
@@ -8,16 +8,16 @@
 // Install via Library Manager: "EspSoftwareSerial" by Dirk Kaar
 
 #include <SoftwareSerial.h>
-#include "RuipuBattery.h"
+#include "OkaiBMS.h"
 
 static SoftwareSerial _ss3, _ss4;
 
 // Global — shared with Heartbeat.ino
-RuipuBattery pack[NUM_PACKS] = {
-    RuipuBattery(&Serial1),
-    RuipuBattery(&Serial2),
-    RuipuBattery(&_ss3),
-    RuipuBattery(&_ss4),
+OkaiBMS pack[NUM_PACKS] = {
+    OkaiBMS(&Serial1),
+    OkaiBMS(&Serial2),
+    OkaiBMS(&_ss3),
+    OkaiBMS(&_ss4),
 };
 
 // Global — shared with Display.ino, Logger.ino, WiFiServer.ino

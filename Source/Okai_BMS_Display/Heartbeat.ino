@@ -5,8 +5,8 @@
 // transmission reaches every pack simultaneously.  We then flush the RX
 // buffers of packs 2-4 so stale bytes don't corrupt the next read frame.
 
-#include "RuipuBattery.h"
-extern RuipuBattery pack[NUM_PACKS];
+#include "OkaiBMS.h"
+extern OkaiBMS pack[NUM_PACKS];
 
 static uint32_t _hbLast;
 

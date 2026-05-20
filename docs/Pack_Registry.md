@@ -6,13 +6,18 @@ Physical packs identified by charge cycle count (CYC fingerprint). The BMS proto
 
 ## Active Packs
 
-| Fingerprint | Slot | Voltage | SOC | Cell Spread | Cycles | Health |
-|---|---|---|---|---|---|---|
-| **CYC-8229** | Pack 1 — GPIO 1 (UART1 RX) | 41.45 V | 100% | 43 mV | 8,229 | Excellent |
-| **CYC-8246** | Pack 2 — GPIO 16 (UART2 RX) | 40.36 V | 90% | 66 mV | 8,246 | Good |
-| **CYC-8256** | Pack 3 — GPIO 17 (SoftSerial RX) | 39.79 V | 84% | 82 mV | 8,256 | Good |
+| Fingerprint | Slot | Voltage | SOC | Cell Spread | Cycles | maxSoc | Health |
+|---|---|---|---|---|---|---|---|
+| **CYC-8229** | Pack 1 — GPIO 1 (UART1 RX) | 41.45 V | 100% | 43 mV | 8,229 | — | Excellent |
+| **CYC-8246** | Pack 2 — GPIO 16 (UART2 RX) | 40.36 V | 90% | 66 mV | 8,246 | — | Good |
+| **CYC-8256** | Pack 3 — GPIO 17 (SoftSerial RX) | 39.79 V | 84% | 82 mV | 8,256 | — | Good |
+| **CYC-54** | Pack 4 — GPIO 18 (SoftSerial RX) | 40.66 V | 93% | 64 mV | 54 | 99% | Excellent — near new |
+| **CYC-78** | Pack 5 — unassigned | 40.73 V | 96→100% | 73 mV | 78 | 100% | Excellent — near new |
 
-*Snapshot from field session 2026-05-19. SOC and voltage change with use; fingerprint and slot assignment are permanent.*
+*CYC-8229/8246/8256 snapshot: 2026-05-19. CYC-54/CYC-78 snapshot: 2026-05-20.*
+*SOC and voltage change with use; fingerprint and slot assignment are permanent.*
+
+> **maxSoc** (byte [6]): max achievable SOC as % of design — SoH indicator decoded 2026-05-20. Near-new packs read 99–100%; field data not yet captured for ex-rental packs.
 
 ---
 
