@@ -12,20 +12,22 @@
 //   Search: "Arduino_GFX"  author: "moononournation"
 
 #include <Arduino_GFX_Library.h>
+#include <canvas/Arduino_Canvas.h>
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 static uint16_t C_BG, C_GOOD, C_WARN, C_POOR, C_CHARGE,
-                C_TEXT, C_DIM, C_ACCENT, C_HDR;
+                C_TEXT, C_DIM, C_ACCENT, C_HDR, C_NODATA;
 
 // ── Display objects ───────────────────────────────────────────────────────────
 static Arduino_DataBus *_bus;
-static Arduino_GFX     *_gfx;
+static Arduino_GFX     *_hw;      // hardware ST7789 (canvas output)
+static Arduino_Canvas  *_canvas;  // 320×170 RGB565 framebuffer in PSRAM
+static Arduino_GFX     *_gfx;    // = _canvas — all draw calls target this
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 #define HDR_H     16
-#define DOT_Y    165   // page-indicator dots center Y
 #define CELL_W   160
-#define CELL_H    73   // (170 - HDR_H - 8) / 2; 8px reserved for dots row
+#define CELL_H    77   // (170 - HDR_H) / 2 — dots moved into header, full height used
 
 static const uint16_t CX[4] = { 0,      CELL_W, 0,      CELL_W };
 static const uint16_t CY[4] = { HDR_H,  HDR_H,  HDR_H + CELL_H,
@@ -42,12 +44,19 @@ static uint8_t  _screen     = 0;
 static uint8_t  _detailPack = 0;
 static uint32_t _alertEnd   = 0;
 static bool     _prevChargeDone[NUM_PACKS];
+static float    gLocalBatV  = 0.0f;     // onboard 18650 voltage (GPIO4 ADC × 2 divider)
 
 // ── Button debounce ───────────────────────────────────────────────────────────
 static bool     _b1Prev, _b2Prev, _b3Prev;
 static uint32_t _b1Ts, _b2Ts, _b3Ts;
 #define DEBOUNCE_MS   50UL
 #define LONGPRESS_MS 800UL   // hold BTN3 to enter label assign
+
+// Set true by displaySleepOverlay() while sleep countdown is active.
+// displayLoop() yields the display to PowerManager while this is true.
+bool gSleepCountdownActive = false;
+
+bool gLightOn = false;   // FET output state (GPIO13)
 
 // ── Refresh timing ────────────────────────────────────────────────────────────
 static uint32_t _dispLast;
@@ -66,9 +75,16 @@ static bool    _showLabelPick  = false;
 static uint8_t _labelPickPort  = 0;
 static uint8_t _labelPickVal   = 0;   // 0=unassigned, 1-8=label
 
+// ── Alternating display phase (5 s primary / 3 s secondary) ─────────────────
+#define ALT_A_MS 5000UL
+#define ALT_B_MS 3000UL
+static inline bool altPhaseA() {
+    return (millis() % (ALT_A_MS + ALT_B_MS)) < ALT_A_MS;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static uint16_t healthColor(uint8_t i) {
-    if (!packs[i].valid) return C_DIM;
+    if (!packs[i].valid) return C_NODATA;
     float d = packs[i].cellHigh - packs[i].cellLow;
     if (d >= CELL_DELTA_POOR_V) return C_POOR;
     if (d >= CELL_DELTA_WARN_V) return C_WARN;
@@ -86,14 +102,7 @@ static uint8_t sohEstimate(uint8_t i) {
     return (uint8_t)(soh < 0 ? 0 : soh);
 }
 
-static void drawPageDots() {
-    _gfx->fillRect(130, DOT_Y - 4, 80, 8, C_BG);
-    for (uint8_t i = 0; i < NUM_SCREENS; i++) {
-        uint16_t dx = 148 + i * 12;
-        if (i == _screen) _gfx->fillCircle(dx, DOT_Y, 3, C_ACCENT);
-        else              _gfx->drawCircle(dx, DOT_Y, 3, C_DIM);
-    }
-}
+// drawPageDots() removed — dots now live in drawHeader() top-right
 
 // ── Overlay: disconnect modal ─────────────────────────────────────────────────
 static void drawDisconnectModal() {
@@ -153,102 +162,150 @@ static void drawLabelPicker() {
     _gfx->print("BTN1:cycle  BTN2:confirm  BTN3:cancel");
 }
 
-// ── Header bar ───────────────────────────────────────────────────────────────
+// ── Onboard 18650 battery sense ───────────────────────────────────────────────
+// LilyGo T-Display-S3: battery on GPIO4 via a 2:1 divider. analogReadMilliVolts()
+// returns eFuse-calibrated mV at the pin; ×2 recovers cell voltage. 4-sample average
+// to settle ADC noise. Read-only — touches no other subsystem.
+static void readLocalBattery() {
+    uint32_t mv = 0;
+    for (int i = 0; i < 4; i++) mv += analogReadMilliVolts(BAT_ADC_PIN);
+    gLocalBatV = (float)(mv >> 2) * 2.0f / 1000.0f;
+}
+
+// ── Header bar (includes nav dots top-right) ─────────────────────────────────
 static void drawHeader() {
     _gfx->fillRect(0, 0, 320, HDR_H, C_HDR);
 
     _gfx->setTextSize(1);
     _gfx->setTextColor(C_ACCENT);
     _gfx->setCursor(2, 4);
-    _gfx->print("OKAI BMS " FW_VERSION);
+    _gfx->print("OKAI BMS");
 
-    // WiFi + log mode in the centre
     LogMode lm = logCurrentMode();
-    char wstr[16];
-    const char *modeTag = (lm == LOG_RIDE) ? " [R]" : (lm == LOG_CHARGE) ? " [C]" : "";
-    snprintf(wstr, sizeof(wstr), "%s%s",
-             wifiActive ? "WiFi:ON" : "WiFi:OFF", modeTag);
-    _gfx->setCursor(148, 4);
+    const char *modeTag = (lm == LOG_RIDE) ? " RDE" : (lm == LOG_CHARGE) ? " CHG" : "";
+    char wstr[14];
+    snprintf(wstr, sizeof(wstr), "%s%s", wifiActive ? "W:ON" : "W:OFF", modeTag);
+    _gfx->setCursor(70, 4);
     _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
     _gfx->print(wstr);
 
-    uint32_t s = millis() / 1000;
-    char up[10];
-    snprintf(up, sizeof(up), "%02lu:%02lu:%02lu", s/3600, (s%3600)/60, s%60);
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(256, 4);
-    _gfx->print(up);
+    // Light state indicator
+    _gfx->setCursor(210, 4);
+    if (gLightOn) {
+        _gfx->setTextColor(C_GOOD);
+        _gfx->print("LGT");
+    } else {
+        _gfx->setTextColor(C_DIM);
+        _gfx->print("lgt");
+    }
+
+    // ── Onboard 18650 battery — icon body centred on x=160 (bar midpoint) ──
+    {
+        int pct = (int)constrain((gLocalBatV - 3.0f) / 1.2f * 100.0f, 0.0f, 100.0f);
+        uint16_t bc = (gLocalBatV < 0.5f) ? C_DIM :
+                      (pct > 60) ? C_GOOD : (pct > 30) ? C_WARN : C_POOR;
+        const int BX = 132, BY = 3, BW = 22, BH = 10;       // icon+readout pair centred on x=160
+        _gfx->drawRect(BX, BY, BW, BH, C_DIM);              // outline
+        _gfx->fillRect(BX + BW, BY + 3, 2, BH - 6, C_DIM);  // nub
+        int fill = ((BW - 2) * pct) / 100;
+        if (fill > 0) _gfx->fillRect(BX + 1, BY + 1, fill, BH - 2, bc);  // charge fill
+
+        char vb[10];
+        bool showPct = !((millis() / 5000) & 1);            // alternate %/voltage every 5 s
+        if (gLocalBatV < 0.5f) snprintf(vb, sizeof(vb), "--");
+        else if (showPct)      snprintf(vb, sizeof(vb), "%d%%", pct);
+        else                   snprintf(vb, sizeof(vb), "%.2fv", gLocalBatV);
+        _gfx->setTextSize(1);
+        _gfx->setTextColor(bc);
+        _gfx->setCursor(BX + BW + 4, 4);                    // readout just right of icon
+        _gfx->print(vb);
+    }
+
+    // Nav dots in header right side (replaces bottom dot strip)
+    for (uint8_t i = 0; i < NUM_SCREENS; i++) {
+        uint16_t dx = 256 + i * 14;
+        if (i == _screen) _gfx->fillCircle(dx, 8, 3, C_ACCENT);
+        else              _gfx->drawCircle(dx, 8, 3, C_DIM);
+    }
 }
 
 // ── Screen 0: Fleet Overview ──────────────────────────────────────────────────
+// Cell layout (160×77 px, size3=18×24, size2=12×16):
+//   Row1 cy+3:  P# (size2) + GOOD/WARN/POOR (size2) right
+//   Row2 cy+23: Alt-A→ SOC% size3 left + voltage size2 right
+//               Alt-B→ current size3 left + delta/temp size2 right
+//   Row3 cy+55: Alt-A→ CYC or ~Wh dim size2
+//               Alt-B→ (blank — current already fills row2)
 static void drawFleetCell(uint8_t i) {
     uint16_t cx = CX[i], cy = CY[i];
     uint16_t hc = healthColor(i);
+    bool phA = altPhaseA();
 
     _gfx->fillRect(cx + 2, cy + 2, CELL_W - 4, CELL_H - 4, C_BG);
     _gfx->drawRect(cx,     cy,     CELL_W,     CELL_H,     hc);
     _gfx->drawRect(cx + 1, cy + 1, CELL_W - 2, CELL_H - 2, hc);
 
-    _gfx->setTextSize(1);
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(cx + 4, cy + 4);
-    _gfx->print("P"); _gfx->print(i + 1);
+    _gfx->setTextSize(2);
 
     if (!packs[i].valid) {
-        _gfx->setTextSize(2);
-        _gfx->setTextColor(C_DIM);
-        _gfx->setCursor(cx + 28, cy + 22);
-        _gfx->print("-- --");
-        _gfx->setTextSize(1);
-        _gfx->setCursor(cx + 44, cy + 50);
-        _gfx->print("no data");
+        _gfx->setTextColor(C_NODATA);
+        _gfx->setCursor(cx + 4, cy + 3);
+        char plbl[4]; snprintf(plbl, sizeof(plbl), "P%u", i + 1);
+        _gfx->print(plbl);
+        _gfx->setCursor(cx + 4, cy + 28);
+        _gfx->print("NO DATA");
         return;
     }
 
-    // Health tag top-right
+    // Row 1 — P# left, health tag right (size2)
     float delta = packs[i].cellHigh - packs[i].cellLow;
     const char *htag = (delta >= CELL_DELTA_POOR_V) ? "POOR" :
                        (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+    char plbl[4]; snprintf(plbl, sizeof(plbl), "P%u", i + 1);
+    _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(cx + 4, cy + 3);
+    _gfx->print(plbl);
     _gfx->setTextColor(hc);
-    _gfx->setCursor(cx + CELL_W - 30, cy + 4);
+    _gfx->setCursor(cx + CELL_W - 52, cy + 3);  // 4ch×12+4px margin
     _gfx->print(htag);
 
-    // SOC — textSize 3 (char = 18×24 px)
-    char soc_s[6];
-    snprintf(soc_s, sizeof(soc_s), "%u%%", (unsigned)packs[i].soc);
-    int16_t soc_w = (int16_t)strlen(soc_s) * 18;
-    _gfx->setTextSize(3);
-    _gfx->setTextColor(hc);
-    _gfx->setCursor(cx + (CELL_W - soc_w) / 2, cy + 12);
-    _gfx->print(soc_s);
-
-    // Voltage + current
-    _gfx->setTextSize(1);
-    _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(cx + 4, cy + 42);
-    char ln1[22];
-    snprintf(ln1, sizeof(ln1), "%.1fV  %+.1fA", packs[i].voltage, packs[i].current);
-    _gfx->print(ln1);
-
-    // Cell delta + max temp
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(cx + 4, cy + 52);
+    // Row 2 — primary value size3 (left) + secondary size2 (right)
     uint16_t dmv = (uint16_t)(delta * 1000.0f + 0.5f);
-    char ln2[22];
-    snprintf(ln2, sizeof(ln2), "d%umV  %u*C", dmv, (unsigned)packs[i].maxTemp);
-    _gfx->print(ln2);
-
-    // Bottom line: Wh remaining during ride, CYC fingerprint otherwise
-    _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(cx + 4, cy + 62);
-    char ln3[16];
-    if (logCurrentMode() == LOG_RIDE) {
-        float avWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        snprintf(ln3, sizeof(ln3), "~%.0f Wh avail", avWh);
+    if (phA) {
+        // SOC% big left, voltage smaller right
+        char soc_s[5]; snprintf(soc_s, sizeof(soc_s), "%u%%", (unsigned)packs[i].soc);
+        _gfx->setTextSize(3);
+        _gfx->setTextColor(hc);
+        _gfx->setCursor(cx + 4, cy + 23);
+        _gfx->print(soc_s);
+        char v_s[8]; snprintf(v_s, sizeof(v_s), "%.1fv", packs[i].voltage);
+        _gfx->setTextSize(2);
+        _gfx->setTextColor(C_ACCENT);
+        _gfx->setCursor(cx + CELL_W - (int16_t)strlen(v_s) * 12 - 4, cy + 31);
+        _gfx->print(v_s);
+        // Row 3 — CYC or Wh dim
+        _gfx->setTextColor(C_DIM);
+        _gfx->setCursor(cx + 4, cy + 58);
+        char r3[14];
+        if (logCurrentMode() == LOG_RIDE) {
+            snprintf(r3, sizeof(r3), "~%.0fWh", (packs[i].soc / 100.0f) * PACK_DESIGN_WH);
+        } else {
+            snprintf(r3, sizeof(r3), "CYC%u", (unsigned)packs[i].cycles);
+        }
+        _gfx->print(r3);
     } else {
-        snprintf(ln3, sizeof(ln3), "CYC-%u", (unsigned)packs[i].cycles);
+        // Current big left, delta+temp smaller right
+        char a_s[8]; snprintf(a_s, sizeof(a_s), "%+.1fA", packs[i].current);
+        _gfx->setTextSize(3);
+        _gfx->setTextColor(C_ACCENT);
+        _gfx->setCursor(cx + 4, cy + 23);
+        _gfx->print(a_s);
+        char dt_s[14]; snprintf(dt_s, sizeof(dt_s), "d%u %u*C", dmv, (unsigned)packs[i].maxTemp);
+        _gfx->setTextSize(2);
+        _gfx->setTextColor(C_TEXT);
+        _gfx->setCursor(cx + 4, cy + 58);
+        _gfx->print(dt_s);
     }
-    _gfx->print(ln3);
 }
 
 // ── Empty-cell summary helpers ────────────────────────────────────────────────
@@ -326,7 +383,7 @@ static void _drawSummaryWide(uint16_t ry, uint8_t nValid,
     _gfx->print(av);
 }
 
-// Narrow panel — fills one 160×73 cell slot
+// Narrow panel — fills one 160×77 cell slot
 static void _drawSummaryNarrow(uint16_t cx, uint16_t cy, uint8_t nValid,
                                 float totalWh, float totalAh) {
     bool riding = (logCurrentMode() == LOG_RIDE);
@@ -342,19 +399,14 @@ static void _drawSummaryNarrow(uint16_t cx, uint16_t cy, uint8_t nValid,
     _gfx->setCursor(cx + 4, cy + 4);
     _gfx->print(ts);
 
-    _gfx->setTextSize(1);
     _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(cx + 4, cy + 28);
-    char wh[18]; snprintf(wh, sizeof(wh), "%.0f Wh left", totalWh);
+    _gfx->setCursor(cx + 4, cy + 26);
+    char wh[14]; snprintf(wh, sizeof(wh), "%.0fWh left", totalWh);
     _gfx->print(wh);
 
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(cx + 4, cy + 40);
-    char mah[20]; snprintf(mah, sizeof(mah), "%.0f mAh", totalAh * 1000.0f);
-    _gfx->print(mah);
-
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(cx + 4, cy + 54);
+    _gfx->setCursor(cx + 4, cy + 50);
+    _gfx->setTextSize(1);
     if (riding && ready) {
         char pw[16]; snprintf(pw, sizeof(pw), "@ %.0fW avg", g_ridePowerEma_W);
         _gfx->print(pw);
@@ -385,7 +437,7 @@ static void drawScreenFleet() {
     // Fill empty cell space with fleet summary
     if (nValid == 0) {
         _gfx->fillRect(0, HDR_H, 320, 2 * CELL_H, C_BG);
-        _gfx->setTextSize(2); _gfx->setTextColor(C_DIM);
+        _gfx->setTextSize(2); _gfx->setTextColor(C_NODATA);
         _gfx->setCursor(72, 84); _gfx->print("No packs");
     } else if (nValid < NUM_PACKS) {
         bool e0 = !packs[0].valid, e1 = !packs[1].valid;
@@ -403,57 +455,37 @@ static void drawScreenFleet() {
         }
     }
 
-    // Bottom strip + page dots
-    _gfx->fillRect(0, HDR_H + 2 * CELL_H, 320, 170 - (HDR_H + 2 * CELL_H), C_BG);
-    if (logCurrentMode() == LOG_RIDE && nValid > 0) {
-        char fs[48];
-        bool ready = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
-        if (ready) {
-            uint16_t mins = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
-            if (mins >= 60)
-                snprintf(fs, sizeof(fs), "~%uh%02um  %uP: %.0fWh / %.1fAh",
-                         mins/60, mins%60, nValid, totalWh, totalAh);
-            else
-                snprintf(fs, sizeof(fs), "~%u min  %uP: %.0fWh / %.1fAh",
-                         mins, nValid, totalWh, totalAh);
-        } else {
-            snprintf(fs, sizeof(fs), "%uP fleet: %.0f Wh / %.1f Ah", nValid, totalWh, totalAh);
-        }
-        _gfx->setTextSize(1); _gfx->setTextColor(C_GOOD);
-        _gfx->setCursor(2, 162); _gfx->print(fs);
-        for (uint8_t d = 0; d < NUM_SCREENS; d++) {
-            uint16_t dx = 264 + d * 12;
-            if (d == _screen) _gfx->fillCircle(dx, DOT_Y, 3, C_ACCENT);
-            else              _gfx->drawCircle(dx, DOT_Y, 3, C_DIM);
-        }
-    } else {
-        drawPageDots();
-    }
 }
 
 // ── Screen 1: Per-pack Detail ─────────────────────────────────────────────────
+// Layout (y positions, full 154px content area below header):
+//   y22  P# label + pack selector dots (size1 nav UI)
+//   y36  SOC% size4 hero (32px tall, ends y68)
+//   y72  Alt-A→ V + A in size3  |  Alt-B→ delta + temp in size3
+//   y100 Alt-A→ power + Wh size2  |  Alt-B→ CYC + SoH size2
+//   y118 Alt-A→ charger status size2 (if present)  |  Alt-B→ sessions size2
 static void drawScreenDetail() {
-    uint8_t i    = _detailPack;
-    uint16_t hc  = healthColor(i);
+    uint8_t i   = _detailPack;
+    uint16_t hc = healthColor(i);
+    bool phA    = altPhaseA();
 
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
 
-    // Pack label + selector dots
+    // P# + pack selector dots (size1 — navigation chrome)
     _gfx->setTextSize(1);
     _gfx->setTextColor(C_TEXT);
     _gfx->setCursor(4, 22);
     char plabel[4]; snprintf(plabel, sizeof(plabel), "P%u", i + 1);
     _gfx->print(plabel);
-
     for (uint8_t d = 0; d < NUM_PACKS; d++) {
         uint16_t dx = 36 + d * 14;
         if (d == i) _gfx->fillCircle(dx, 25, 4, C_ACCENT);
         else        _gfx->drawCircle(dx, 25, 4, C_DIM);
     }
 
-    // Health tag top-right
-    float delta  = packs[i].valid ? (packs[i].cellHigh - packs[i].cellLow) : 0.0f;
+    // Health tag top-right (size1)
+    float delta = packs[i].valid ? (packs[i].cellHigh - packs[i].cellLow) : 0.0f;
     const char *htag = !packs[i].valid ? "----" :
                        (delta >= CELL_DELTA_POOR_V) ? "POOR" :
                        (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
@@ -463,14 +495,13 @@ static void drawScreenDetail() {
 
     if (!packs[i].valid) {
         _gfx->setTextSize(2);
-        _gfx->setTextColor(C_DIM);
+        _gfx->setTextColor(C_NODATA);
         _gfx->setCursor(80, 88);
         _gfx->print("NO DATA");
-        drawPageDots();
         return;
     }
 
-    // SOC — textSize 4 (char = 24×32 px)
+    // SOC — size4 (24×32px) centred
     char soc_s[6];
     snprintf(soc_s, sizeof(soc_s), "%u%%", (unsigned)packs[i].soc);
     int16_t soc_w = (int16_t)strlen(soc_s) * 24;
@@ -479,328 +510,277 @@ static void drawScreenDetail() {
     _gfx->setCursor((320 - soc_w) / 2, 36);
     _gfx->print(soc_s);
 
-    // Instant power | Available energy — textSize 2 (char = 12×16 px)
-    float powerW  = packs[i].voltage * packs[i].current;
-    float availWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-    char pw_s[14], av_s[14];
-    snprintf(pw_s, sizeof(pw_s), "%+.0fW", powerW);
-    snprintf(av_s, sizeof(av_s), "%.0fWh avail", availWh);
-    _gfx->setTextSize(2);
-    _gfx->setTextColor(packs[i].current >= 0 ? C_CHARGE : C_ACCENT);
-    _gfx->setCursor(4, 78);
-    _gfx->print(pw_s);
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(140, 78);
-    _gfx->print(av_s);
-
-    // Voltage | Current — textSize 2
-    char v_s[10], a_s[10];
-    snprintf(v_s, sizeof(v_s), "%.2fV", packs[i].voltage);
-    snprintf(a_s, sizeof(a_s), "%+.2fA", packs[i].current);
-    _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(4, 98);
-    _gfx->print(v_s);
-    _gfx->setCursor(170, 98);
-    _gfx->print(a_s);
-
-    // Cell delta | Temp — textSize 1
     uint16_t dmv = (uint16_t)(delta * 1000.0f + 0.5f);
-    char d_s[12], t_s[10];
-    snprintf(d_s, sizeof(d_s), "d%umV", dmv);
-    snprintf(t_s, sizeof(t_s), "%u*C", (unsigned)packs[i].maxTemp);
-    _gfx->setTextSize(1);
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(4, 120);  _gfx->print(d_s);
-    _gfx->setCursor(100, 120); _gfx->print(t_s);
+    uint8_t  soh = sohEstimate(i);
+    _gfx->setTextSize(3);   // size3 = 18×24px for the primary alternating row
 
-    // Cycles | SoH vs new BD — textSize 1
-    uint8_t soh = sohEstimate(i);
-    char c_s[14], soh_s[16];
-    snprintf(c_s,   sizeof(c_s),   "CYC-%u", (unsigned)packs[i].cycles);
-    snprintf(soh_s, sizeof(soh_s), "SoH %u%% vs new", (unsigned)soh);
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 132);  _gfx->print(c_s);
-    _gfx->setTextColor(soh >= 80 ? C_GOOD : soh >= 60 ? C_WARN : C_POOR);
-    _gfx->setCursor(100, 132); _gfx->print(soh_s);
+    if (phA) {
+        // Alt A (5s) — voltage + current big, power + Wh below
+        char va[20];
+        snprintf(va, sizeof(va), "%.2fV %+.2fA", packs[i].voltage, packs[i].current);
+        _gfx->setTextColor(C_ACCENT);
+        _gfx->setCursor(4, 72);
+        _gfx->print(va);
 
-    // Session energy in/out — textSize 1
-    char sess[36];
-    snprintf(sess, sizeof(sess), "Sess: +%.1fWh / -%.1fWh",
-             packs[i].whIn, packs[i].whOut);
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 144);
-    _gfx->print(sess);
+        float powerW  = packs[i].voltage * packs[i].current;
+        float availWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+        char pw[20];
+        snprintf(pw, sizeof(pw), "%+.0fW  %.0fWh", powerW, availWh);
+        _gfx->setTextSize(2);
+        _gfx->setTextColor(packs[i].current >= 0 ? C_CHARGE : C_ACCENT);
+        _gfx->setCursor(4, 100);
+        _gfx->print(pw);
 
-    // Charger status — textSize 1
-    if (packs[i].chargerDetected) {
-        _gfx->setTextColor(packs[i].chargeDone ? C_GOOD : C_CHARGE);
-        _gfx->setCursor(4, 156);
-        _gfx->print(packs[i].chargeDone ? "Charge complete" : "Charging...");
+        if (packs[i].chargerDetected) {
+            _gfx->setTextColor(packs[i].chargeDone ? C_GOOD : C_CHARGE);
+            _gfx->setCursor(4, 118);
+            _gfx->print(packs[i].chargeDone ? "Charge done" : "Charging...");
+        }
+    } else {
+        // Alt B (3s) — delta + temp big, CYC + SoH + sessions below
+        char dt[16];
+        snprintf(dt, sizeof(dt), "d%umV  %u*C", dmv, (unsigned)packs[i].maxTemp);
+        _gfx->setTextColor(C_TEXT);
+        _gfx->setCursor(4, 72);
+        _gfx->print(dt);
+
+        char cs[18];
+        snprintf(cs, sizeof(cs), "CYC%u  SoH%u%%", (unsigned)packs[i].cycles, (unsigned)soh);
+        _gfx->setTextSize(2);
+        _gfx->setTextColor(soh >= 80 ? C_GOOD : soh >= 60 ? C_WARN : C_POOR);
+        _gfx->setCursor(4, 100);
+        _gfx->print(cs);
+
+        char sess[22];
+        snprintf(sess, sizeof(sess), "+%.1fWh / -%.1fWh", packs[i].whIn, packs[i].whOut);
+        _gfx->setTextColor(C_DIM);
+        _gfx->setCursor(4, 118);
+        _gfx->print(sess);
     }
-
-    drawPageDots();
 }
 
 // ── Screen 2a: Ride Energy — time left + fleet Wh/mAh ────────────────────────
 static void drawScreenRideEnergy() {
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
+    bool phA = altPhaseA();
 
-    // Fleet totals
-    float totalWh = 0.0f, totalMah = 0.0f;
+    float totalWh = 0.0f, totalAh = 0.0f;
     uint8_t n = 0;
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (!packs[i].valid) continue;
-        totalWh  += (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        totalMah += (packs[i].soc / 100.0f) * PACK_DESIGN_AH * 1000.0f;
+        totalWh += (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+        totalAh += (packs[i].soc / 100.0f) * PACK_DESIGN_AH;
         n++;
     }
 
-    // ── Big time estimate (textSize 2 = 16 px tall) ──────────────────────────
-    char timeStr[20];
+    // Time estimate size3 (important!)
     bool ready = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
+    char timeStr[20];
     if (!ready) {
-        strcpy(timeStr, "~-- min left");
+        strcpy(timeStr, "~-- min");
         _gfx->setTextColor(C_DIM);
     } else {
         uint16_t mins = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
-        if (mins >= 60)
-            snprintf(timeStr, sizeof(timeStr), "~%uh%02um left", mins/60, mins%60);
-        else
-            snprintf(timeStr, sizeof(timeStr), "~%u min left", mins);
+        if (mins >= 60) snprintf(timeStr, sizeof(timeStr), "~%uh%02um", mins/60, mins%60);
+        else            snprintf(timeStr, sizeof(timeStr), "~%u min", mins);
         _gfx->setTextColor(C_GOOD);
     }
-    _gfx->setTextSize(2);
-    _gfx->setCursor(4, 22);
+    _gfx->setTextSize(3);
+    _gfx->setCursor(4, 20);
     _gfx->print(timeStr);
 
-    // Avg power note
+    // Power note size1 dim
     _gfx->setTextSize(1);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 42);
+    _gfx->setCursor(4, 48);
     if (ready) {
-        char pw[32];
-        snprintf(pw, sizeof(pw), "@ %.0f W avg (%u samples)", g_ridePowerEma_W, (unsigned)g_ridePowerN);
+        char pw[32]; snprintf(pw, sizeof(pw), "@ %.0fW avg (%u samples)", g_ridePowerEma_W, (unsigned)g_ridePowerN);
         _gfx->print(pw);
     } else {
         _gfx->print("(measuring power draw...)");
     }
 
-    // Column headers
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 54);
-    _gfx->print("Pack  SoC    Wh avail    mAh avail");
-
-    // Per-pack rows
+    // Per-pack rows size2, 20px pitch
+    _gfx->setTextSize(2);
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        uint16_t ry = 64 + i * 16;
+        uint16_t ry = 60 + i * 20;
         _gfx->setCursor(4, ry);
         if (!packs[i].valid) {
-            _gfx->setTextColor(C_DIM);
-            char row[36]; snprintf(row, sizeof(row), "P%u   ---     ---         ---", i+1);
+            _gfx->setTextColor(C_NODATA);
+            char row[10]; snprintf(row, sizeof(row), "P%u  ---", i+1);
             _gfx->print(row);
             continue;
         }
-        float wh  = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        float mah = (packs[i].soc / 100.0f) * PACK_DESIGN_AH * 1000.0f;
-        char row[40];
-        snprintf(row, sizeof(row), "P%u  %3u%%  %5.0f Wh  %6.0f mAh",
-                 i+1, (unsigned)packs[i].soc, wh, mah);
         _gfx->setTextColor(C_TEXT);
+        char row[20];
+        if (phA) {
+            float wh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
+            snprintf(row, sizeof(row), "P%u %3u%% %4.0fWh", i+1, (unsigned)packs[i].soc, wh);
+        } else {
+            float ah = (packs[i].soc / 100.0f) * PACK_DESIGN_AH;
+            snprintf(row, sizeof(row), "P%u %3u%% %.1fAh", i+1, (unsigned)packs[i].soc, ah);
+        }
         _gfx->print(row);
     }
 
-    // Fleet total — y = 64 + 4*16 = 128
-    char tot[48];
-    snprintf(tot, sizeof(tot), "Fleet (%uP): %.0f Wh  /  %.0f mAh",
-             n, totalWh, totalMah);
+    // Fleet total
     _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(4, 130);
+    _gfx->setCursor(4, 60 + NUM_PACKS * 20 + 4);
+    char tot[22];
+    if (phA) snprintf(tot, sizeof(tot), "Fleet %uP: %.0fWh", n, totalWh);
+    else     snprintf(tot, sizeof(tot), "Fleet %uP: %.1fAh", n, totalAh);
     _gfx->print(tot);
-
-    // Design reference
-    char des[48];
-    snprintf(des, sizeof(des), "Design(%uP): %.0f Wh  /  %.0f mAh",
-             n, n * PACK_DESIGN_WH, n * PACK_DESIGN_AH * 1000.0f);
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 144);
-    _gfx->print(des);
-
-    drawPageDots();
 }
 
 // ── Screen 2: Charging Live ───────────────────────────────────────────────────
+// Row pitch 30px: 16px size2 label + 10px bar + 4px gap
 static void drawScreenCharging() {
     if (logCurrentMode() == LOG_RIDE) { drawScreenRideEnergy(); return; }
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
 
-    bool anyCharger  = false;
+    bool anyCharger = false;
     uint8_t donePacks = 0;
-    float totalA     = 0.0f;
-    bool blinkOn     = (millis() / 250) % 2;
+    float totalW = 0.0f;
+    bool blinkOn = (millis() / 250) % 2;
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (packs[i].valid && packs[i].chargerDetected) anyCharger = true;
         if (packs[i].valid && packs[i].chargeDone)      donePacks++;
-        if (packs[i].valid && packs[i].isCharging)      totalA += packs[i].current;
+        if (packs[i].valid && packs[i].isCharging)      totalW += packs[i].voltage * packs[i].current;
     }
 
     if (!anyCharger) {
         _gfx->setTextSize(2);
-        _gfx->setTextColor(C_DIM);
+        _gfx->setTextColor(C_NODATA);
         _gfx->setCursor(60, 84);
         _gfx->print("No charger");
-        drawPageDots();
         return;
     }
 
-    // One row per pack (28 px per row, starting at y=26)
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        uint16_t ry = 26 + i * 28;
+        uint16_t ry = 22 + i * 30;
         bool hasData = packs[i].valid && packs[i].chargerDetected;
 
-        // Pack label
-        _gfx->setTextSize(1);
+        _gfx->setTextSize(2);
         _gfx->setTextColor(C_TEXT);
         _gfx->setCursor(4, ry);
-        char pl[4]; snprintf(pl, sizeof(pl), "P%u", i + 1);
-        _gfx->print(pl);
-
         if (!hasData) {
-            _gfx->setTextColor(C_DIM);
-            _gfx->setCursor(BAR_X, ry);
-            _gfx->print("---");
+            char pl[10]; snprintf(pl, sizeof(pl), "P%u  ---", i+1);
+            _gfx->setTextColor(C_NODATA);
+            _gfx->print(pl);
             continue;
         }
 
-        // SOC%  (left of bar)
-        char soc_s[6];
-        snprintf(soc_s, sizeof(soc_s), "%u%%", (unsigned)packs[i].soc);
-        _gfx->setTextColor(C_TEXT);
-        _gfx->setCursor(22, ry);
-        _gfx->print(soc_s);
+        // "P1 87%" size2
+        char lbl[10]; snprintf(lbl, sizeof(lbl), "P%u %u%%", i+1, (unsigned)packs[i].soc);
+        _gfx->print(lbl);
 
-        // Fill bar
-        uint16_t filled = (uint16_t)((uint32_t)packs[i].soc * BAR_W / 100);
-        uint16_t barClr = packs[i].chargeDone ? C_GOOD : C_CHARGE;
-        _gfx->fillRect(BAR_X,          ry + 10, filled,       BAR_H, barClr);
-        _gfx->fillRect(BAR_X + filled, ry + 10, BAR_W - filled, BAR_H, C_DIM);
-        _gfx->drawRect(BAR_X - 1, ry + 9, BAR_W + 2, BAR_H + 2, C_DIM);
-
-        // Animated leading-edge blink while charging
-        if (packs[i].isCharging && blinkOn && filled < BAR_W) {
-            _gfx->drawFastVLine(BAR_X + filled, ry + 10, BAR_H, 0xFFFF);
-        }
-
-        // ETA or DONE (right of bar)
+        // ETA / DONE right-aligned size2
         if (packs[i].chargeDone) {
             _gfx->setTextColor(C_GOOD);
-            _gfx->setCursor(BAR_X + BAR_W + 4, ry);
+            _gfx->setCursor(256, ry);
             _gfx->print("DONE");
         } else if (packs[i].isCharging && packs[i].current > 0.05f) {
             float etaMin = ((100.0f - packs[i].soc) / 100.0f)
                            * PACK_DESIGN_AH / packs[i].current * 60.0f;
             uint16_t eta = (uint16_t)(etaMin + 0.5f);
-            char eta_s[10];
+            char eta_s[8];
             if (eta >= 60) snprintf(eta_s, sizeof(eta_s), "%uh%02um", eta/60, eta%60);
             else           snprintf(eta_s, sizeof(eta_s), "%um", eta);
             _gfx->setTextColor(C_CHARGE);
-            _gfx->setCursor(BAR_X + BAR_W + 4, ry);
+            uint16_t ex = 316 - (uint16_t)strlen(eta_s) * 12;
+            _gfx->setCursor(ex, ry);
             _gfx->print(eta_s);
         }
+
+        // Fill bar below label
+        uint16_t by     = ry + 17;
+        uint16_t filled = (uint16_t)((uint32_t)packs[i].soc * BAR_W / 100);
+        uint16_t barClr = packs[i].chargeDone ? C_GOOD : C_CHARGE;
+        _gfx->fillRect(BAR_X,          by, filled,         BAR_H, barClr);
+        _gfx->fillRect(BAR_X + filled, by, BAR_W - filled, BAR_H, C_DIM);
+        _gfx->drawRect(BAR_X - 1, by - 1, BAR_W + 2, BAR_H + 2, C_DIM);
+        if (packs[i].isCharging && blinkOn && filled < BAR_W)
+            _gfx->drawFastVLine(BAR_X + filled, by, BAR_H, 0xFFFF);
     }
 
-    // Summary
-    float totalW = 0.0f;
-    for (uint8_t i = 0; i < NUM_PACKS; i++)
-        if (packs[i].valid && packs[i].isCharging)
-            totalW += packs[i].voltage * packs[i].current;
-
-    char sum[40];
-    snprintf(sum, sizeof(sum), "Total: %.0fW  Packs done: %u/%u",
-             totalW, (unsigned)donePacks, (unsigned)NUM_PACKS);
-    _gfx->setTextSize(1);
+    // Summary size2
+    _gfx->setTextSize(2);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 152);
+    _gfx->setCursor(4, 22 + NUM_PACKS * 30 + 4);
+    char sum[24];
+    snprintf(sum, sizeof(sum), "%.0fW  Done:%u/%u", totalW, (unsigned)donePacks, (unsigned)NUM_PACKS);
     _gfx->print(sum);
-
-    drawPageDots();
 }
 
 // ── Screen 3: Cell Health / Energy ───────────────────────────────────────────
+// Alt-A (5s): P#  SOC%  Wh  GOOD/WARN/POOR
+// Alt-B (3s): P#  delta  CYC  SoH%
+// Row pitch 24px (16px text + 8px gap), 4 rows from y=44 to y=140
 static void drawScreenHealth() {
     _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
     drawHeader();
+    bool phA = altPhaseA();
 
-    _gfx->setTextSize(1);
+    // Title size2
+    _gfx->setTextSize(2);
     _gfx->setTextColor(C_ACCENT);
     _gfx->setCursor(4, 20);
-    _gfx->print("CELL HEALTH  (vs NCR18650BD new)");
-
-    // Column headers
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 32);
-    _gfx->print("Pack  dV-mV  CYC#  SoH  Avail.Wh  Status");
+    _gfx->print(phA ? "FLEET HEALTH" : "CELL DETAIL");
 
     uint8_t worstPack = 0xFF;
     uint8_t lowestSoH = 255;
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        uint16_t ry = 44 + i * 18;
+        uint16_t ry = 44 + i * 24;
+        uint16_t hc = healthColor(i);
+        _gfx->setTextSize(2);
         _gfx->setCursor(4, ry);
 
         if (!packs[i].valid) {
-            _gfx->setTextColor(C_DIM);
-            char row[42];
-            snprintf(row, sizeof(row), "P%u    ---    ---   ---  ---Wh  no data", i+1);
+            _gfx->setTextColor(C_NODATA);
+            char row[14]; snprintf(row, sizeof(row), "P%u  NO DATA", i+1);
             _gfx->print(row);
             continue;
         }
 
-        uint8_t  soh  = sohEstimate(i);
-        uint16_t dmv  = (uint16_t)((packs[i].cellHigh - packs[i].cellLow) * 1000.0f + 0.5f);
-        float    avWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        uint16_t hc   = healthColor(i);
+        uint8_t  soh = sohEstimate(i);
+        uint16_t dmv = (uint16_t)((packs[i].cellHigh - packs[i].cellLow) * 1000.0f + 0.5f);
+        float   avWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
         const char *stag = (dmv >= (uint16_t)(CELL_DELTA_POOR_V * 1000.0f)) ? "POOR" :
                            (dmv >= (uint16_t)(CELL_DELTA_WARN_V * 1000.0f)) ? "WARN" : "GOOD";
-
         if (soh < lowestSoH) { lowestSoH = soh; worstPack = i; }
 
-        // Fixed-width data row
-        char row[42];
-        snprintf(row, sizeof(row), "P%u  %4u  %4u  %3u%%  %4.0fWh",
-                 i+1, (unsigned)dmv, (unsigned)packs[i].cycles,
-                 (unsigned)soh, avWh);
-        _gfx->setTextColor(C_TEXT);
-        _gfx->print(row);
-
         _gfx->setTextColor(hc);
-        _gfx->setCursor(276, ry);
-        _gfx->print(stag);
+        char row[26];
+        if (phA) {
+            // P1  87%  401Wh  GOOD
+            snprintf(row, sizeof(row), "P%u %3u%% %4.0fWh %s",
+                     i+1, (unsigned)packs[i].soc, avWh, stag);
+        } else {
+            // P1  d43mV  8229c  97%
+            snprintf(row, sizeof(row), "P%u d%umV %uc %u%%",
+                     i+1, (unsigned)dmv, (unsigned)packs[i].cycles, (unsigned)soh);
+        }
+        _gfx->print(row);
     }
 
-    // Worst-pack recommendation
+    // Worst-pack note size1 dim
+    _gfx->setTextSize(1);
     if (worstPack != 0xFF && lowestSoH < 90) {
-        uint16_t dmv = packs[worstPack].valid
-                       ? (uint16_t)((packs[worstPack].cellHigh - packs[worstPack].cellLow) * 1000.0f)
-                       : 0;
-        int replace = 200 - (int)dmv * 2;
-        if (replace < 0) replace = 0;
         char rec[44];
-        snprintf(rec, sizeof(rec), "P%u worst: %u%% SoH, ~%d cyc remaining",
-                 worstPack + 1, (unsigned)lowestSoH, replace);
+        snprintf(rec, sizeof(rec), "P%u lowest SoH: %u%%  (NCR18650BD ref)",
+                 worstPack + 1, (unsigned)lowestSoH);
         _gfx->setTextColor(C_WARN);
-        _gfx->setCursor(4, 120);
+        _gfx->setCursor(4, 148);
         _gfx->print(rec);
+    } else {
+        _gfx->setTextColor(C_DIM);
+        _gfx->setCursor(4, 148);
+        _gfx->print("Design: 460.8Wh  Ref: NCR18650BD");
     }
-
-    // Design-capacity reference
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(4, 134);
-    _gfx->print("New BD design: 460.8Wh  Per-cell V: N/A (internal)");
-
-    drawPageDots();
 }
 
 // ── Charge-done flash overlay ─────────────────────────────────────────────────
@@ -825,6 +805,9 @@ void displayInit() {
     pinMode(TFT_BL_PIN, OUTPUT);
     digitalWrite(TFT_BL_PIN, HIGH);
 
+    pinMode(LIGHT_FET_PIN, OUTPUT);
+    digitalWrite(LIGHT_FET_PIN, LOW);
+
     pinMode(BUTTON1_PIN, INPUT_PULLUP);
     pinMode(BUTTON2_PIN, INPUT_PULLUP);
     pinMode(BUTTON3_PIN, INPUT_PULLUP);
@@ -842,9 +825,13 @@ void displayInit() {
         TFT_D0, TFT_D1, TFT_D2, TFT_D3,
         TFT_D4, TFT_D5, TFT_D6, TFT_D7
     );
-    _gfx = new Arduino_ST7789(_bus, TFT_RST,
-                               1, true, 170, 320, 35, 0, 35, 0);
-    _gfx->begin();
+    _hw = new Arduino_ST7789(_bus, TFT_RST,
+                              3, true, 170, 320, 35, 0, 35, 0);
+    if (!psramFound()) Serial.println("[DISP] WARNING: no PSRAM — canvas falls back to heap, WiFi may OOM");
+    _canvas = new Arduino_Canvas(320, 170, _hw);
+    if (!_canvas) { Serial.println("[DISP] FATAL: canvas alloc failed"); while (1) delay(1000); }
+    _canvas->begin();
+    _gfx = _canvas;
     _gfx->fillScreen(0);
 
     // Palette — matches plan spec
@@ -854,7 +841,8 @@ void displayInit() {
     C_POOR   = _gfx->color565(255,  82,  82);
     C_CHARGE = _gfx->color565(  0, 188, 212);
     C_TEXT   = _gfx->color565(224, 224, 224);
-    C_DIM    = _gfx->color565( 80,  80,  80);
+    C_DIM    = _gfx->color565(160, 160, 160);
+    C_NODATA = _gfx->color565(100, 220, 220);
     C_ACCENT = _gfx->color565( 68, 170, 255);
     C_HDR    = _gfx->color565( 14,  14,  28);
 
@@ -863,6 +851,10 @@ void displayInit() {
     _alertEnd   = 0;
     _dispLast   = 0;
 
+    analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);
+    readLocalBattery();
+
+    _canvas->flush();
     Serial.println("[DISP] ready 320x170, 4 screens");
 }
 
@@ -889,85 +881,101 @@ static void checkDisconnects(uint32_t now) {
 }
 
 void displayLoop() {
+    if (gSleepCountdownActive) return;  // PowerManager owns the display
+
     uint32_t now = millis();
 
-    // ── Disconnect detection (runs always, independent of overlays)
     checkDisconnects(now);
 
-    // ── Button reading
     bool b1 = digitalRead(BUTTON1_PIN);
     bool b2 = digitalRead(BUTTON2_PIN);
     bool b3 = digitalRead(BUTTON3_PIN);
 
-    // ── Overlay: label picker (highest priority — consumes all buttons)
+    // ── Overlay: label picker
     if (_showLabelPick) {
-        // BTN1 — cycle label 0 → 1 → … → 8 → 0
         if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
             _b1Ts = now;
             _labelPickVal = (_labelPickVal >= NUM_LABELS) ? 0 : _labelPickVal + 1;
         }
-        // BTN2 — confirm
         if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
             _b2Ts = now;
             labelSet(_labelPickPort, _labelPickVal);
             _showLabelPick = false;
-            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);  // force redraw
+            _dispLast = 0;  // force immediate full redraw on dismiss
         }
-        // BTN3 — cancel
         if (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
             _b3Ts = now;
             _showLabelPick = false;
-            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
+            _dispLast = 0;
         }
         _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
-        drawLabelPicker();
+        if (_showLabelPick) { drawLabelPicker(); _canvas->flush(); }
         return;
     }
 
     // ── Overlay: disconnect modal
     if (_showDisconnect) {
-        // BTN1 — yes, assign new label
         if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
             _b1Ts = now;
             _showDisconnect = false;
             _showLabelPick  = true;
             _labelPickPort  = _disconnectPort;
-            // _labelPickVal already set when disconnect was triggered
         }
-        // BTN2 or BTN3 — dismiss
         if ((_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) ||
             (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS)) {
             _b2Ts = _b3Ts = now;
             _showDisconnect = false;
-            _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);
+            _dispLast = 0;
         }
         _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
-        drawDisconnectModal();
+        if (_showDisconnect) { drawDisconnectModal(); _canvas->flush(); }
         return;
     }
 
     // ── Normal button handling
-    // BTN1 — WiFi toggle (screen 0) or cycle pack (screen 1)
-    if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
-        _b1Ts = now;
-        if (_screen == 0)      wifiToggle();
-        else if (_screen == 1) _detailPack = (_detailPack + 1) % NUM_PACKS;
+
+    // BTN2+BTN3 combo: toggle light FET (checked first to suppress individual actions)
+    static bool     _comboFired = false;
+    static uint32_t _comboTs    = 0;
+    if (b2 == LOW && b3 == LOW) {
+        if (_comboTs == 0) _comboTs = now;
+        if (!_comboFired && (now - _comboTs) >= DEBOUNCE_MS) {
+            _comboFired = true;
+            gLightOn    = !gLightOn;
+            digitalWrite(LIGHT_FET_PIN, gLightOn ? HIGH : LOW);
+            _b2Ts = now;  // reset BTN2 timer — suppresses screen-change on release
+            _b3Ts = now;  // reset BTN3 timer — suppresses screen-change on release
+        }
+    } else {
+        _comboTs    = 0;
+        _comboFired = false;
+    }
+
+    // BTN1: record press time on falling edge, act on rising edge (release).
+    // Ignores releases from a hold >= SLEEP_HOLD_MS — device sleeps before release.
+    if (b1 == LOW && _b1Prev == HIGH) _b1Ts = now;
+    if (_b1Prev == LOW && b1 == HIGH) {
+        uint32_t held = now - _b1Ts;
+        if (held >= DEBOUNCE_MS && held < SLEEP_HOLD_MS) {
+            if (_screen == 0)      wifiToggle();
+            else if (_screen == 1) _detailPack = (_detailPack + 1) % NUM_PACKS;
+        }
     }
     _b1Prev = b1;
 
-    // BTN2 — next screen →
-    if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
+    // BTN2: next screen — only fires if BTN3 is not also pressed (prevents combo collision)
+    if (_b2Prev == HIGH && b2 == LOW && b3 == HIGH && (now - _b2Ts) > DEBOUNCE_MS) {
         _b2Ts   = now;
         _screen = (_screen + 1) % NUM_SCREENS;
     }
     _b2Prev = b2;
 
-    // BTN3 — prev screen ← (short press) OR label assign (long press on screen 0)
-    if (b3 == LOW && _b3Prev == HIGH) _b3Ts = now;  // record press start
-    if (_b3Prev == LOW && b3 == HIGH) {              // released
+    // BTN3: prev screen (short) / label assign (long on screen 0)
+    // Release-based; _b3Ts reset during combo ensures release fires with held≈0 → no action.
+    if (b3 == LOW && _b3Prev == HIGH && b2 == HIGH) _b3Ts = now;
+    if (_b3Prev == LOW && b3 == HIGH) {
         uint32_t held = now - _b3Ts;
         if (held >= LONGPRESS_MS && _screen == 0) {
-            // Long press on fleet screen → label assignment for port 0
             _showLabelPick = true;
             _labelPickPort = 0;
             _labelPickVal  = labelGet(0);
@@ -977,12 +985,14 @@ void displayLoop() {
     }
     _b3Prev = b3;
 
-    // ── Charge-done alert (every loop for responsive flash)
-    applyAlertOverlay();
+    // Alert flashing needs 250 ms refresh; BMS data is fine at 500 ms
+    bool alertActive = (_alertEnd && now < _alertEnd);
+    uint32_t refreshMs = alertActive ? 250UL : DISPLAY_REFRESH_MS;
 
-    // ── Periodic screen refresh
-    if (now - _dispLast < DISPLAY_REFRESH_MS) return;
+    if (now - _dispLast < refreshMs) return;
     _dispLast = now;
+
+    readLocalBattery();
 
     switch (_screen) {
         case 0: drawScreenFleet();    break;
@@ -990,6 +1000,51 @@ void displayLoop() {
         case 2: drawScreenCharging(); break;
         case 3: drawScreenHealth();   break;
     }
-
     applyAlertOverlay();
+    _canvas->flush();   // single atomic write to display — no flicker
+}
+
+// ── Sleep countdown overlay ───────────────────────────────────────────────────
+// Called by PowerManager.ino. heldMs = elapsed hold time (0–SLEEP_HOLD_MS).
+// Pass 0xFFFFFFFF to clear (button released before threshold).
+void displaySleepOverlay(uint32_t heldMs) {
+    if (heldMs == 0xFFFFFFFFUL) {
+        gSleepCountdownActive = false;
+        _dispLast = 0;  // force full redraw on next displayLoop cycle
+        return;
+    }
+    gSleepCountdownActive = true;
+
+    uint32_t clamped = heldMs > SLEEP_HOLD_MS ? SLEEP_HOLD_MS : heldMs;
+    uint8_t  pct     = (uint8_t)(clamped * 100UL / SLEEP_HOLD_MS);
+    uint32_t remMs   = SLEEP_HOLD_MS - clamped;
+    uint8_t  secs    = (uint8_t)((remMs + 999UL) / 1000UL);
+
+    _gfx->fillRect(50, 50, 220, 80, C_HDR);
+    _gfx->drawRect(50, 50, 220, 80, C_WARN);
+    _gfx->drawRect(51, 51, 218, 78, C_WARN);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_WARN);
+    _gfx->setCursor(60, 64);
+    if (secs == 0) {
+        _gfx->print("   Going to sleep...");
+    } else {
+        char buf[28];
+        snprintf(buf, sizeof(buf), " Hold to sleep: %u s left", (unsigned)secs);
+        _gfx->print(buf);
+    }
+
+    uint16_t barW   = 192;
+    uint16_t filled = (uint16_t)((uint32_t)barW * pct / 100);
+    _gfx->fillRect(64, 84, filled,        10, C_WARN);
+    _gfx->fillRect(64 + filled, 84, barW - filled, 10, C_DIM);
+    _gfx->drawRect(63, 83, barW + 2,      12, C_DIM);
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(60, 110);
+    _gfx->print("   Release BTN1 to cancel");
+
+    _canvas->flush();
 }

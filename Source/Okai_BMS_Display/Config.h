@@ -59,6 +59,12 @@
 #define TFT_BL_PIN      38
 #define DISPLAY_REFRESH_MS  500UL
 
+// ─── Onboard battery sense (LilyGo T-Display-S3 18650) ───────────────────────
+// GPIO4 = onboard battery ADC, fed through a 2:1 divider (two equal resistors).
+// Vbat = analogReadMilliVolts(4) × 2. Single Li-ion range: 3.0 V empty → 4.2 V full.
+// GPIO4 is reserved-for-ADC in the pin map above; nothing else uses it.
+#define BAT_ADC_PIN     4
+
 // ─── TFT parallel bus (T-Display-S3 ST7789 8-bit) ────────────────────────────
 #define TFT_DC   7
 #define TFT_CS   6
@@ -75,9 +81,16 @@
 #define TFT_D7  48
 
 // ─── Buttons ─────────────────────────────────────────────────────────────────
-#define BUTTON1_PIN      0   // BTN1: WiFi toggle / confirm action
+#define BUTTON1_PIN      0   // BTN1: WiFi toggle / confirm (short) | sleep (4s hold)
 #define BUTTON2_PIN     14   // BTN2: next screen →
 #define BUTTON3_PIN     21   // BTN3: prev screen ←  (long-press = label assign)
+
+// ─── Power management ─────────────────────────────────────────────────────────
+#define POWER_EN_PIN    15       // LiPo power latch — must stay HIGH while running
+#define SLEEP_HOLD_MS   4000UL   // hold BTN1 this long → deep sleep; press BTN1 to wake
+
+// ─── Light FET output ─────────────────────────────────────────────────────────
+#define LIGHT_FET_PIN  13        // N-ch MOSFET gate: HIGH = light on
 
 // ─── WiFi AP ─────────────────────────────────────────────────────────────────
 #define WIFI_AP_SSID     "OkaiBMS"

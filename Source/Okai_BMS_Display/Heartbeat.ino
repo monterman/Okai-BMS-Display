@@ -18,6 +18,9 @@ void heartbeatLoop() {
     if (millis() - _hbLast < HEARTBEAT_INTERVAL_MS) return;
     _hbLast = millis();
 
+    Serial.print("[HB] keep-alive tx @ ");
+    Serial.println(millis());
+
     pack[0].unlock();                                   // TX + flush pack1 RX
     for (uint8_t i = 1; i < NUM_PACKS; i++) {
         pack[i].reset();                                // flush remaining RX only

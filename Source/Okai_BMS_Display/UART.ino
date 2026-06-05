@@ -31,10 +31,13 @@ void uartInit() {
     memset(packs, 0, sizeof(packs));
     memset(_wasValid, 0, sizeof(_wasValid));
 
-    Serial1.begin(BMS_BAUD, SERIAL_8N1, PACK1_RX_PIN, PACK1_TX_PIN);
-    Serial2.begin(BMS_BAUD, SERIAL_8N1, PACK2_RX_PIN, PACK2_TX_PIN);
-    _ss3.begin(BMS_BAUD, SWSERIAL_8N1, PACK3_RX_PIN, PACK3_TX_PIN);
-    _ss4.begin(BMS_BAUD, SWSERIAL_8N1, PACK4_RX_PIN, PACK4_TX_PIN);
+    // Serial2 / SoftwareSerial are RX-only (TX=-1) so they don't fight Serial1 for
+    // GPIO2 via the ESP32-S3 GPIO matrix.  Serial1 (PACK1_TX_PIN=GPIO2) must be
+    // last so it wins the gpio_matrix_out() call and actually drives GPIO2.
+    Serial2.begin(BMS_BAUD, SERIAL_8N1, PACK2_RX_PIN, -1);
+    _ss3.begin(BMS_BAUD,    SWSERIAL_8N1, PACK3_RX_PIN, -1);
+    _ss4.begin(BMS_BAUD,    SWSERIAL_8N1, PACK4_RX_PIN, -1);
+    Serial1.begin(BMS_BAUD, SERIAL_8N1, PACK1_RX_PIN, PACK1_TX_PIN);  // owns GPIO2 TX
 
     Serial.println("[UART] 4 pack ports open");
 }
@@ -44,6 +47,10 @@ void uartLoop() {
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (pack[i].read()) {
+            Serial.print("[RX] pack"); Serial.print(i + 1);
+            Serial.print(" SOC="); Serial.print(pack[i].soc());
+            Serial.print("% V="); Serial.print(pack[i].voltage(), 2);
+            Serial.print(" CYC="); Serial.println(pack[i].cycleCount());
             // Accumulate Wh from the previous interval using the OLD V and A
             // (Euler forward: treat the interval as constant at the last reading)
             if (packs[i].valid) {

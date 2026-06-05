@@ -17,6 +17,7 @@
 
 bool wifiActive = false;
 static WebServer _srv(80);
+static char      _csrfToken[9] = {0};   // HIGH-1: per-boot random token
 extern bool fsReady;
 
 // OkaiBMS instances are in UART.ino
@@ -44,9 +45,11 @@ static void handleRoot() {
     // ── head
     h += F("<!DOCTYPE html><html><head>"
            "<meta charset='utf-8'><title>Okai BMS</title>"
-           "<meta http-equiv='refresh' content='5'>"
-           "<script>fetch('/settime?t='+Date.now());</script>"
-           "<style>"
+           "<meta http-equiv='refresh' content='5'>");
+    h += "<script>fetch('/settime?t='+Date.now()+'&_t=";
+    h += _csrfToken;
+    h += "');</script>";
+    h += F("<style>"
            "body{background:#0d1117;color:#e0e0e0;font-family:monospace;padding:16px}"
            "h2,h3{color:#4af;margin:8px 0 4px}"
            "p{color:#888;margin:4px 0}"
@@ -147,22 +150,26 @@ static void handleRoot() {
         while (f) {
             if (isCsvFile(f.name())) {
                 any = true;
-                char row[256];
+                char row[280];
                 // f.name() returns just the base name without leading /
                 snprintf(row, sizeof(row),
                     "<tr><td>%s</td><td>%u KB</td>"
                     "<td><a class='btn' href='/csv?f=/%s'>&#128229;</a></td>"
-                    "<td><a class='btn' href='/delete?f=/%s'>&#128465;</a></td></tr>",
+                    "<td><a class='btn' href='/delete?f=/%s&_t=%s'>&#128465;</a></td></tr>",
                     f.name(), (unsigned)(f.size() / 1024),
-                    f.name(), f.name());
+                    f.name(), f.name(), _csrfToken);
                 h += row;
             }
-            f = root.openNextFile();
+            File next = root.openNextFile();
+            f.close();
+            f = next;
         }
         root.close();
         if (!any) h += F("<tr><td colspan='4' class='dim'>No log files yet</td></tr>");
         h += F("</table>");
-        h += F("<p><a class='btn' href='/clearall'>&#9888; Delete all logs</a>"
+        h += F("<p><a class='btn' href='/clearall?_t=");
+        h += _csrfToken;
+        h += F("'>&#9888; Delete all logs</a>"
                " &nbsp; <a class='btn' href='/rawdump'>&#128270; Raw frame dump</a>"
                " &nbsp; <a class='btn' href='/packs'>&#128230; Pack registry</a></p>");
 
@@ -185,19 +192,25 @@ static void handleRoot() {
 
 // ── Route: /settime ───────────────────────────────────────────────────────────
 static void handleSetTime() {
-    if (_srv.hasArg("t")) {
-        int64_t epochMs = (int64_t)_srv.arg("t").toDouble();
-        timeSyncSet(epochMs);
-        _srv.send(200, "text/plain", "OK");
-    } else {
-        _srv.send(400, "text/plain", "Missing t");
+    if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+        _srv.send(403, "text/plain", "Forbidden");
+        return;
     }
+    if (!_srv.hasArg("t")) { _srv.send(400, "text/plain", "Missing t"); return; }
+    int64_t epochMs = (int64_t)_srv.arg("t").toDouble();
+    // Clamp to 2020-01-01 .. 2100-01-01 to reject bogus values (HIGH-4)
+    if (epochMs < 1577836800000LL || epochMs > 4102444800000LL) {
+        _srv.send(400, "text/plain", "Bad epoch");
+        return;
+    }
+    timeSyncSet(epochMs);
+    _srv.send(200, "text/plain", "OK");
 }
 
 // ── Route: /csv?f=/NAME.csv ───────────────────────────────────────────────────
 static void handleCsv() {
     String fname = _srv.hasArg("f") ? _srv.arg("f") : String("/bms_log.csv");
-    if (!safePath(fname) || !fsReady || !LittleFS.exists(fname)) {
+    if (!safePath(fname) || !isCsvFile(fname.c_str()) || !fsReady || !LittleFS.exists(fname)) {
         _srv.send(404, "text/plain", "Not found");
         return;
     }
@@ -211,8 +224,12 @@ static void handleCsv() {
 
 // ── Route: /delete?f=/NAME.csv ────────────────────────────────────────────────
 static void handleDelete() {
+    if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+        _srv.send(403, "text/plain", "Forbidden");
+        return;
+    }
     String fname = _srv.hasArg("f") ? _srv.arg("f") : String();
-    if (!safePath(fname) || !fsReady) {
+    if (!safePath(fname) || !isCsvFile(fname.c_str()) || !fsReady) {
         _srv.send(400, "text/plain", "Bad request");
         return;
     }
@@ -223,6 +240,10 @@ static void handleDelete() {
 
 // ── Route: /clearall ──────────────────────────────────────────────────────────
 static void handleClearAll() {
+    if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+        _srv.send(403, "text/plain", "Forbidden");
+        return;
+    }
     if (fsReady) {
         File root = LittleFS.open("/");
         File f    = root.openNextFile();
@@ -231,7 +252,9 @@ static void handleClearAll() {
                 String p = String("/") + f.name();
                 LittleFS.remove(p);
             }
-            f = root.openNextFile();
+            File next = root.openNextFile();
+            f.close();
+            f = next;
         }
         root.close();
         Serial.println("[WiFi] all logs cleared");
@@ -334,6 +357,7 @@ static void handleNotFound() {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 void wifiServerInit() {
+    snprintf(_csrfToken, sizeof(_csrfToken), "%08x", (unsigned)esp_random());
     _srv.on("/",         handleRoot);
     _srv.on("/settime",  handleSetTime);
     _srv.on("/csv",      handleCsv);

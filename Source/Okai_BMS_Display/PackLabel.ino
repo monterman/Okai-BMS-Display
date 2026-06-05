@@ -49,7 +49,8 @@ static void loadTimeFromFlash() {
         _timeSynced    = true;
         // Verify sanity: epoch must be after 2024-01-01
         if (_syncEpochSec < 1704067200UL) { _timeSynced = false; return; }
-        uint32_t nowEst = _syncEpochSec + (millis()/1000 - _syncMillisSec);
+        int32_t  _drift = (int32_t)((uint32_t)(millis()/1000) - _syncMillisSec);
+        uint32_t nowEst = _syncEpochSec + (uint32_t)(_drift > 0 ? _drift : 0);
         Serial.printf("[TIME] restored from flash: ~%lu (drift: %lus since sync)\n",
                       (unsigned long)nowEst,
                       (unsigned long)(millis()/1000 - _syncMillisSec));
@@ -139,8 +140,9 @@ time_t timeNowSec() {
 #ifdef USE_DS3231
     if (_rtcOk) return (time_t)_rtc.now().unixtime();
 #endif
-    // Software: base epoch + elapsed millis since sync
-    return (time_t)(_syncEpochSec + (millis()/1000 - _syncMillisSec));
+    // Software: base epoch + elapsed millis since sync (cast prevents underflow at rollover)
+    int32_t elapsed = (int32_t)((uint32_t)(millis()/1000) - _syncMillisSec);
+    return (time_t)(_syncEpochSec + (uint32_t)(elapsed > 0 ? elapsed : 0));
 }
 
 // Called from /settime (browser JS Date.now() in milliseconds)
@@ -186,8 +188,8 @@ void labelStr(uint8_t port, char *buf, size_t len) {
 }
 
 // ── Session counters ──────────────────────────────────────────────────────────
-uint16_t sessRideNext()   { return ++_sessRide; }
-uint16_t sessChargeNext() { return ++_sessCharge; }
+uint16_t sessRideNext()   { if (_sessRide   < 999) _sessRide++;   return _sessRide; }
+uint16_t sessChargeNext() { if (_sessCharge < 999) _sessCharge++; return _sessCharge; }
 
 // ── Filename builder ──────────────────────────────────────────────────────────
 void makeLogFilename(char *out, size_t outLen,

@@ -38,7 +38,7 @@ static LogMode detectMode() {
             _rideUntilMs = millis() + LOG_RIDE_HYSTERESIS_MS;
         }
     }
-    if (millis() < _rideUntilMs) return LOG_RIDE;
+    if ((int32_t)(millis() - _rideUntilMs) < 0) return LOG_RIDE;
     return LOG_IDLE;
 }
 
@@ -121,7 +121,7 @@ static void exitToIdle() {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 void loggerInit() {
-    if (!LittleFS.begin(true)) {
+    if (!LittleFS.begin(true, "/littlefs", 10, "ffat")) {
         Serial.println("[LOG] LittleFS mount failed");
         return;
     }
@@ -173,4 +173,13 @@ void loggerLoop() {
     _logFile.flush();
 
     if (_fileSizeBytes >= LOG_MAX_FILE_BYTES) rollSegment();
+}
+
+// Called before deep sleep — flushes + closes the active log file cleanly.
+void loggerShutdown() {
+    closeFile();
+    if (fsReady) {
+        LittleFS.end();
+        fsReady = false;
+    }
 }
