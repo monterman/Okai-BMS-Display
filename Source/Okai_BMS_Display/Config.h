@@ -1,7 +1,7 @@
 #pragma once
 
 // ─── Firmware version ────────────────────────────────────────────────────────
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.2.1"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4
@@ -31,7 +31,10 @@
 #define BMS_BAUD 9600
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────────
-#define HEARTBEAT_INTERVAL_MS 5000UL
+// Official jsutcliff/OKAI-Battery-Lib sends the unlock every 1 s; the pack only
+// tolerates up to 5 s before it stops outputting. 5000 sat exactly on that limit
+// and got starved by the cooperative loop → packs dropped. Back to the proven 1 s.
+#define HEARTBEAT_INTERVAL_MS 1000UL
 
 // ─── Smart logging ───────────────────────────────────────────────────────────
 // Two streams: R_YYYYMMDD_NNN_S.csv (ride) and C_YYYYMMDD_NNN_S.csv (charge)

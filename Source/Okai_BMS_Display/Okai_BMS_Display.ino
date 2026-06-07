@@ -14,8 +14,8 @@ void setup() {
   Serial.begin(115200);   // UART0 — USB-C debug
 
   powerManagerInit(); // configures EXT0 wakeup before anything else
-  heartbeatInit();
-  uartInit();
+  uartInit();         // open Serial1 (GPIO2 TX) BEFORE the heartbeat task starts
+  heartbeatInit();    // spawns the Core-0 keep-alive task
   loggerInit();       // mounts LittleFS first (packlabelInit needs fsReady)
   packlabelInit();    // loads labels, session counters, initialises DS3231
   packRegistryInit(); // ensures /packs dir, ready to identify packs
@@ -27,7 +27,7 @@ void setup() {
 
 void loop() {
   powerManagerLoop(); // hold BTN1 ≥ 4 s → deep sleep (runs before display reads button)
-  heartbeatLoop();    // Priority 1 — always first
+  heartbeatLoop();    // no-op — keep-alive now runs on its own Core-0 task
   uartLoop();         // Priority 2 — read pack data
   loggerLoop();       // Priority 3 — flush to LittleFS
   displayLoop();      // Priority 4 — update TFT
