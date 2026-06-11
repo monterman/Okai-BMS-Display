@@ -9,3 +9,6 @@ build/
 # Machine-specific — not portable
 docs/Build.md
 CLAUDE.md
+
+# Local wiring reference — hardware build notes, not source
+docs/Waterproof_Connector_Wiring.md
