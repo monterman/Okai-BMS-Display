@@ -69,7 +69,7 @@ static void writeFileHeader() {
     _logFile.println();
     _logFile.printf("# Segment: %u  MaxBytes: %lu\n", _segment, LOG_MAX_FILE_BYTES);
     _logFile.println("Timestamp,UpSec,Label,Port,SOC,Voltage_V,Current_A,"
-                     "Power_W,CellHigh_V,CellLow_V,Delta_mV,MaxTemp_C,Cycles");
+                     "Power_W,CellHigh_V,CellLow_V,Delta_mV,MaxTemp_C,Cycles,Status,Warn");
     _fileSizeBytes = (uint32_t)_logFile.size();
 }
 
@@ -157,16 +157,25 @@ void loggerLoop() {
         float delta  = packs[i].cellHigh - packs[i].cellLow;
         float powerW = packs[i].voltage * packs[i].current;
 
-        char row[128];
+        // Decode BMS status flags so warnings are captured in the LOG, not just on-screen.
+        // Status = raw status byte (lossless). Warn = human summary of genuine alerts.
+        char warn[24]; warn[0] = '\0';
+        if (packs[i].rawStatus & 0x10)        strcat(warn, "CELL_UV;");      // bit4
+        if (delta >= CELL_DELTA_POOR_V)       strcat(warn, "DELTA_POOR;");
+        else if (delta >= CELL_DELTA_WARN_V)  strcat(warn, "DELTA_WARN;");
+        if (!warn[0]) { warn[0] = '-'; warn[1] = '\0'; }
+
+        char row[160];
         int n = snprintf(row, sizeof(row),
-                 "%s,%lu,%s,%u,%u,%.3f,%+.3f,%.1f,%.3f,%.3f,%u,%u,%u",
+                 "%s,%lu,%s,%u,%u,%.3f,%+.3f,%.1f,%.3f,%.3f,%u,%u,%u,0x%02X,%s",
                  ts, (unsigned long)upSec, lbl, (unsigned)(i+1),
                  (unsigned)packs[i].soc,
                  packs[i].voltage, packs[i].current, powerW,
                  packs[i].cellHigh, packs[i].cellLow,
                  (unsigned)(delta * 1000.0f + 0.5f),
                  (unsigned)packs[i].maxTemp,
-                 (unsigned)packs[i].cycles);
+                 (unsigned)packs[i].cycles,
+                 (unsigned)packs[i].rawStatus, warn);
         _logFile.println(row);
         _fileSizeBytes += (uint32_t)(n + 1);
     }

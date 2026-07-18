@@ -1,7 +1,7 @@
 #pragma once
 
 // ─── Firmware version ────────────────────────────────────────────────────────
-#define FW_VERSION "0.2.1"
+#define FW_VERSION "0.3.0"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4
@@ -92,8 +92,38 @@
 #define POWER_EN_PIN    15       // LiPo power latch — must stay HIGH while running
 #define SLEEP_HOLD_MS   4000UL   // hold BTN1 this long → deep sleep; press BTN1 to wake
 
-// ─── Light FET output ─────────────────────────────────────────────────────────
-#define LIGHT_FET_PIN  13        // N-ch MOSFET gate: HIGH = light on
+// ─── Light FET output (LEGACY — RETIRED) ─────────────────────────────────────
+// ⚠ GPIO13 is now NeoPixel status strip 2 (see below). The flag-light MOSFET is
+// deprecated and NO LONGER DRIVEN by firmware — the display must not touch GPIO13
+// or it fights the strip's RMT signal. Do not wire a light to GPIO13 anymore.
+#define LIGHT_FET_PIN  13        // (legacy) superseded by LED2_PIN — not driven
+
+// ─── Status LED bars (NeoPixel WS2812) — 2× 12 px, one data pin each ─────────
+// Layout per strip: pack A [px0-4] | gap [px5-6 dark] | pack B [px7-10] | KA [px11].
+// px11 on BOTH strips is the keep-alive indicator (white slow-blink = healthy,
+// solid red = watchdog-stalled). Low brightness; 3V3 + GND.
+#define LED1_PIN  10             // NeoPixel strip 1 (packs 1+2)
+#define LED2_PIN  13             // NeoPixel strip 2 (packs 3+4) — takes GPIO13 from retired FET
+
+// ─── Keep-alive watchdog / edge-pixel indicator ─────────────────────────────
+// The LED indicator reads g_hbLastMs (published by the Core-1 heartbeat task each
+// beat). If no beat within HB_WATCHDOG_MS → indicator goes SOLID RED. 2500 ms is
+// > the 1 s cadence + jitter yet well inside the pack's 5 s sleep deadline.
+#define HB_WATCHDOG_MS  2500UL
+extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat, millis()
+
+// ─── Dynamic home screen ─────────────────────────────────────────────────────
+#define HOME_IDLE_MS       180000UL    // 3 min with no button input → auto-return to Home
+#define PACK_CONNECTED_MS  5000UL      // no fresh frame in this long → pack is dead/disconnected
+
+// ─── Runtime ("time remaining") estimator ────────────────────────────────────
+// Displayed "~X min" = the WORST connected pack (soonest to hit the reserve). Each
+// pack independently feeds a motor, so a mean would over-promise. Method: per-pack
+// SOC-decline slope (primary) blended with per-pack current/power (cross-check).
+#define RUNTIME_SAMPLE_MS    10000UL   // per-pack SOC ring sample cadence
+#define RUNTIME_WINDOW_MS    150000UL  // 2.5 min trailing window for the decline slope
+#define RUNTIME_MIN_SPAN_MS  45000UL   // need >=45 s of data before showing a number
+#define RUNTIME_RESERVE_PCT  15        // per-pack stop-riding reserve (extrapolate to here)
 
 // ─── WiFi AP ─────────────────────────────────────────────────────────────────
 #define WIFI_AP_SSID     "OkaiBMS"

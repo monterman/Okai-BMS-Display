@@ -13,6 +13,7 @@
 
 static uint32_t sPm_downMs      = 0;
 static uint32_t sPm_lastOverlay = 0;
+static bool     sPm_armed       = false;   // hold-to-sleep arms only AFTER BTN1 is released once
 
 void powerManagerInit() {
     pinMode(BUTTON1_PIN, INPUT_PULLUP);
@@ -35,6 +36,11 @@ static void doSleep() {
 void powerManagerLoop() {
     bool     pressed = (digitalRead(BUTTON1_PIN) == LOW);
     uint32_t now     = millis();
+
+    if (!sPm_armed) {                  // after wake/boot, ignore a still-held BTN1 until released once
+        if (!pressed) sPm_armed = true;
+        return;
+    }
 
     if (pressed) {
         if (sPm_downMs == 0) sPm_downMs = now;

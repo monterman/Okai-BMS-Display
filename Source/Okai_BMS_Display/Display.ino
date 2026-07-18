@@ -26,12 +26,8 @@ static Arduino_GFX     *_gfx;    // = _canvas — all draw calls target this
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 #define HDR_H     16
-#define CELL_W   160
-#define CELL_H    77   // (170 - HDR_H) / 2 — dots moved into header, full height used
-
-static const uint16_t CX[4] = { 0,      CELL_W, 0,      CELL_W };
-static const uint16_t CY[4] = { HDR_H,  HDR_H,  HDR_H + CELL_H,
-                                 HDR_H + CELL_H };
+// (The old fixed 2x2 fleet grid — CELL_W/CELL_H/CX/CY — was retired with the
+//  adaptive HOME screen; cell geometry is now computed per connected-pack count.)
 
 // Charging bar geometry (screen 2)
 #define BAR_X    60
@@ -56,10 +52,33 @@ static uint32_t _b1Ts, _b2Ts, _b3Ts;
 // displayLoop() yields the display to PowerManager while this is true.
 bool gSleepCountdownActive = false;
 
-bool gLightOn = false;   // FET output state (GPIO13)
+bool gLightOn = false;   // legacy flag only — GPIO13 is now NeoPixel strip 2 (not driven)
+
+// True unless the framebuffer alloc failed (no PSRAM + low heap). When false the
+// display is skipped entirely so the LEDs + keep-alive keep running (never hang).
+static bool gDisplayOk = true;
 
 // ── Refresh timing ────────────────────────────────────────────────────────────
 static uint32_t _dispLast;
+
+// ── Dynamic home: connected-pack helpers ──────────────────────────────────────
+// A pack counts as connected only if it has a fresh frame within PACK_CONNECTED_MS.
+static uint32_t _lastInputMs = 0;   // last button activity — drives HOME_IDLE_MS auto-return
+static inline bool packConnected(uint8_t i) {
+    return packs[i].valid && (millis() - packs[i].lastUpdateMs) < PACK_CONNECTED_MS;
+}
+static inline bool anyConnected() {
+    for (uint8_t i = 0; i < NUM_PACKS; i++) if (packConnected(i)) return true;
+    return false;
+}
+// Next connected pack after `cur` (wraps); returns `cur` if none other is connected.
+static uint8_t nextConnectedPack(uint8_t cur) {
+    for (uint8_t s = 1; s <= NUM_PACKS; s++) {
+        uint8_t j = (cur + s) % NUM_PACKS;
+        if (packConnected(j)) return j;
+    }
+    return cur;
+}
 
 // ── Pack disconnect tracking ──────────────────────────────────────────────────
 #define DISCONNECT_DEBOUNCE_MS 120000UL  // 2 min — filters brief glitches and short stops
@@ -229,232 +248,241 @@ static void drawHeader() {
     }
 }
 
-// ── Screen 0: Fleet Overview ──────────────────────────────────────────────────
-// Cell layout (160×77 px, size3=18×24, size2=12×16):
-//   Row1 cy+3:  P# (size2) + GOOD/WARN/POOR (size2) right
-//   Row2 cy+23: Alt-A→ SOC% size3 left + voltage size2 right
-//               Alt-B→ current size3 left + delta/temp size2 right
-//   Row3 cy+55: Alt-A→ CYC or ~Wh dim size2
-//               Alt-B→ (blank — current already fills row2)
-static void drawFleetCell(uint8_t i) {
-    uint16_t cx = CX[i], cy = CY[i];
-    uint16_t hc = healthColor(i);
-    bool phA = altPhaseA();
+// ══ Adaptive HOME screen (dynamic, connected-only, contiguous) ════════════════
+// Home shows ONLY connected packs (packConnected(), PACK_CONNECTED_MS), packed
+// contiguously in ascending port order — no empty slots. Each cell keeps its REAL
+// port tag (P1..P4) so a weak pack stays identifiable. Layout + info density adapt
+// to the connected count (1/2/3/4). A whole-buggy "time remaining" band (worst
+// connected pack) sits at the bottom on the 1/2/3-pack tiers.
 
-    _gfx->fillRect(cx + 2, cy + 2, CELL_W - 4, CELL_H - 4, C_BG);
-    _gfx->drawRect(cx,     cy,     CELL_W,     CELL_H,     hc);
-    _gfx->drawRect(cx + 1, cy + 1, CELL_W - 2, CELL_H - 2, hc);
+// Ordered, contiguous list of CONNECTED packs (ascending real port).
+static uint8_t buildConnectedList(uint8_t out[NUM_PACKS]) {
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < NUM_PACKS; i++) if (packConnected(i)) out[n++] = i;
+    return n;
+}
+static float fleetRemainingWh(const uint8_t* list, uint8_t n) {
+    float wh = 0.0f;
+    for (uint8_t k = 0; k < n; k++) wh += (packs[list[k]].soc / 100.0f) * PACK_DESIGN_WH;
+    return wh;
+}
 
-    _gfx->setTextSize(2);
+// ── Time-remaining estimator (WORST connected pack) ───────────────────────────
+// Displayed value = min over connected packs of each pack's own time-to-reserve.
+// Per-pack SOC-decline slope (primary) blended with per-pack current/power (cross-
+// check). Resets cleanly when the connected set changes. Compute-plane only.
+static struct { uint32_t t; uint8_t soc[NUM_PACKS]; } _rtRing[20];
+static uint8_t  _rtCount    = 0;
+static uint32_t _rtLastSamp = 0;
+static uint32_t _rtSetMask  = 0xFFFFFFFF;
+static float    _pkPwrEma[NUM_PACKS] = {0};   // per-pack discharge-power EMA (W)
+static uint8_t  _pkPwrN[NUM_PACKS]   = {0};
+static uint32_t _pkPwrLast = 0;
 
-    if (!packs[i].valid) {
-        _gfx->setTextColor(C_NODATA);
-        _gfx->setCursor(cx + 4, cy + 3);
-        char plbl[4]; snprintf(plbl, sizeof(plbl), "P%u", i + 1);
-        _gfx->print(plbl);
-        _gfx->setCursor(cx + 4, cy + 28);
-        _gfx->print("NO DATA");
-        return;
+// Called every loop from displayLoop() — self-gated. Never touches the keep-alive.
+static void runtimeSample() {
+    uint32_t now = millis();
+    uint8_t list[NUM_PACKS]; uint8_t n = buildConnectedList(list);
+    uint32_t mask = 0; for (uint8_t k = 0; k < n; k++) mask |= (1u << list[k]);
+    if (mask != _rtSetMask) {                       // connected set changed → restart clean
+        _rtSetMask = mask; _rtCount = 0; _rtLastSamp = 0;
+        for (uint8_t i = 0; i < NUM_PACKS; i++) { _pkPwrEma[i] = 0; _pkPwrN[i] = 0; }
     }
+    if (n == 0) { _rtCount = 0; return; }
 
-    // Row 1 — P# left, health tag right (size2)
-    float delta = packs[i].cellHigh - packs[i].cellLow;
-    const char *htag = (delta >= CELL_DELTA_POOR_V) ? "POOR" :
-                       (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
-    char plbl[4]; snprintf(plbl, sizeof(plbl), "P%u", i + 1);
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(cx + 4, cy + 3);
-    _gfx->print(plbl);
-    _gfx->setTextColor(hc);
-    _gfx->setCursor(cx + CELL_W - 52, cy + 3);  // 4ch×12+4px margin
-    _gfx->print(htag);
-
-    // Row 2 — primary value size3 (left) + secondary size2 (right)
-    uint16_t dmv = (uint16_t)(delta * 1000.0f + 0.5f);
-    if (phA) {
-        // SOC% big left, voltage smaller right
-        char soc_s[5]; snprintf(soc_s, sizeof(soc_s), "%u%%", (unsigned)packs[i].soc);
-        _gfx->setTextSize(3);
-        _gfx->setTextColor(hc);
-        _gfx->setCursor(cx + 4, cy + 23);
-        _gfx->print(soc_s);
-        char v_s[8]; snprintf(v_s, sizeof(v_s), "%.1fv", packs[i].voltage);
-        _gfx->setTextSize(2);
-        _gfx->setTextColor(C_ACCENT);
-        _gfx->setCursor(cx + CELL_W - (int16_t)strlen(v_s) * 12 - 4, cy + 31);
-        _gfx->print(v_s);
-        // Row 3 — CYC or Wh dim
-        _gfx->setTextColor(C_DIM);
-        _gfx->setCursor(cx + 4, cy + 58);
-        char r3[14];
-        if (logCurrentMode() == LOG_RIDE) {
-            snprintf(r3, sizeof(r3), "~%.0fWh", (packs[i].soc / 100.0f) * PACK_DESIGN_WH);
-        } else {
-            snprintf(r3, sizeof(r3), "CYC%u", (unsigned)packs[i].cycles);
+    // Per-pack discharge-power EMA @1 s (filters the 0x2020 / 8.224 A idle placeholder)
+    if (now - _pkPwrLast >= 1000UL) {
+        _pkPwrLast = now;
+        for (uint8_t k = 0; k < n; k++) {
+            uint8_t p = list[k];
+            float cur = packs[p].current;
+            if (fabsf(cur - 8.224f) < 0.05f) continue;     // idle placeholder — skip
+            float draw = -packs[p].voltage * cur;          // W, >0 only while discharging
+            if (draw < 0) draw = 0;
+            const float A = 0.15f;
+            _pkPwrEma[p] = (_pkPwrN[p] == 0) ? draw : A * draw + (1.0f - A) * _pkPwrEma[p];
+            if (_pkPwrN[p] < 255) _pkPwrN[p]++;
         }
-        _gfx->print(r3);
-    } else {
-        // Current big left, delta+temp smaller right
-        char a_s[8]; snprintf(a_s, sizeof(a_s), "%+.1fA", packs[i].current);
-        _gfx->setTextSize(3);
-        _gfx->setTextColor(C_ACCENT);
-        _gfx->setCursor(cx + 4, cy + 23);
-        _gfx->print(a_s);
-        char dt_s[14]; snprintf(dt_s, sizeof(dt_s), "d%u %u*C", dmv, (unsigned)packs[i].maxTemp);
-        _gfx->setTextSize(2);
+    }
+
+    // Per-pack SOC ring @RUNTIME_SAMPLE_MS
+    if (_rtCount == 0 || (now - _rtLastSamp) >= RUNTIME_SAMPLE_MS) {
+        _rtLastSamp = now;
+        uint8_t keep = 0;                              // drop samples older than the window
+        for (uint8_t i = 0; i < _rtCount; i++)
+            if (now - _rtRing[i].t <= RUNTIME_WINDOW_MS) _rtRing[keep++] = _rtRing[i];
+        if (keep >= 20) { for (uint8_t i = 1; i < 20; i++) _rtRing[i-1] = _rtRing[i]; keep = 19; }
+        _rtRing[keep].t = now;
+        for (uint8_t i = 0; i < NUM_PACKS; i++) _rtRing[keep].soc[i] = packs[i].soc;
+        _rtCount = keep + 1;
+    }
+}
+
+// Minutes until pack p hits the reserve, or -1 if not yet computable.
+static float packRuntimeMins(uint8_t p) {
+    int socNow = packs[p].soc;
+    if (socNow <= RUNTIME_RESERVE_PCT) return 0.0f;
+    float socMins = -1.0f;                             // primary: SOC decline slope
+    if (_rtCount >= 2) {
+        uint32_t span = _rtRing[_rtCount-1].t - _rtRing[0].t;
+        float    drop = (float)_rtRing[0].soc[p] - (float)_rtRing[_rtCount-1].soc[p];
+        if (span >= RUNTIME_MIN_SPAN_MS && drop > 0.05f)
+            socMins = (socNow - RUNTIME_RESERVE_PCT) / (drop / (span / 60000.0f));
+    }
+    float powMins = -1.0f;                             // cross-check: per-pack current/power
+    if (_pkPwrN[p] >= 3 && _pkPwrEma[p] >= 20.0f)
+        powMins = ((socNow - RUNTIME_RESERVE_PCT) / 100.0f * PACK_DESIGN_WH) / _pkPwrEma[p] * 60.0f;
+    if (socMins > 0 && powMins > 0) return 0.5f * socMins + 0.5f * powMins;
+    if (socMins > 0) return socMins;
+    if (powMins > 0) return powMins;
+    return -1.0f;
+}
+
+// Whole-buggy string = the WORST (soonest-to-reserve) connected pack.
+static void runtimeString(char* out, size_t len) {
+    if (logCurrentMode() == LOG_CHARGE) { snprintf(out, len, "CHARGING"); return; }
+    uint8_t list[NUM_PACKS]; uint8_t n = buildConnectedList(list);
+    if (!n) { snprintf(out, len, "~-- min"); return; }
+    float worst = -1.0f;
+    for (uint8_t k = 0; k < n; k++) {
+        uint8_t p = list[k];
+        if (packs[p].soc <= RUNTIME_RESERVE_PCT) { snprintf(out, len, "LOW P%u", p + 1); return; }
+        float m = packRuntimeMins(p);
+        if (m >= 0 && (worst < 0 || m < worst)) worst = m;
+    }
+    if (worst < 0) { snprintf(out, len, "~-- min"); return; }   // warming up
+    if (worst > 599) { snprintf(out, len, ">9h"); return; }
+    uint16_t m = (uint16_t)(worst + 0.5f);
+    if (m >= 60) snprintf(out, len, "~%uh%02um", m / 60, m % 60);
+    else         snprintf(out, len, "~%u min", m);
+}
+
+// ── Cell primitives ───────────────────────────────────────────────────────────
+static void drawSocBarH(int x, int y, int w, int h, uint8_t soc, uint16_t col) {
+    if (soc > 100) soc = 100;
+    _gfx->drawRect(x, y, w, h, C_DIM);
+    _gfx->fillRect(x + 1, y + 1, w - 2, h - 2, C_BG);
+    int fw = ((w - 2) * soc) / 100;
+    if (fw > 0) _gfx->fillRect(x + 1, y + 1, fw, h - 2, col);
+}
+static void drawSocBarV(int x, int y, int w, int h, uint8_t soc, uint16_t col) {
+    if (soc > 100) soc = 100;
+    _gfx->drawRect(x, y, w, h, C_DIM);
+    _gfx->fillRect(x + 1, y + 1, w - 2, h - 2, C_BG);
+    int fh = ((h - 2) * soc) / 100;
+    if (fh > 0) _gfx->fillRect(x + 1, y + h - 1 - fh, w - 2, fh, col);   // fill bottom-up
+}
+static void drawCellTags(int x, int y, int w, uint8_t p, uint8_t tagSize, bool showHealth) {
+    char b[6];
+    _gfx->setTextSize(tagSize); _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(x + 4, y + 4);
+    snprintf(b, sizeof(b), "P%u", p + 1); _gfx->print(b);       // REAL port number
+    if (showHealth) {
+        float d = packs[p].cellHigh - packs[p].cellLow;
+        const char *ht = (d >= CELL_DELTA_POOR_V) ? "POOR" :
+                         (d >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+        _gfx->setTextColor(healthColor(p));
+        _gfx->setCursor(x + w - 4 - 4 * 6 * tagSize, y + 4);    // 4 chars, 6px/char/size
+        _gfx->print(ht);
+    }
+}
+
+// Draw one connected pack into a rect at a density tier (1..4 = packs on screen).
+static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
+    uint16_t hc  = healthColor(p);
+    uint16_t dmv = (uint16_t)((packs[p].cellHigh - packs[p].cellLow) * 1000.0f + 0.5f);
+    uint8_t  soc = packs[p].soc;
+    char b[20];
+    _gfx->fillRect(x + 1, y + 1, w - 2, h - 2, C_BG);
+    _gfx->drawRect(x, y, w, h, hc);
+
+    if (tier == 1) {                                   // full detail
+        drawCellTags(x, y, w, p, 2, true);
+        _gfx->setTextSize(6); _gfx->setTextColor(hc);
+        snprintf(b, sizeof(b), "%u%%", soc); _gfx->setCursor(x + 8, y + 24); _gfx->print(b);
+        _gfx->setTextSize(3); _gfx->setTextColor(C_ACCENT);
+        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 174, y + 28); _gfx->print(b);
         _gfx->setTextColor(C_TEXT);
-        _gfx->setCursor(cx + 4, cy + 58);
-        _gfx->print(dt_s);
+        snprintf(b, sizeof(b), "%+.1fA", packs[p].current); _gfx->setCursor(x + 174, y + 56); _gfx->print(b);
+        drawSocBarH(x + 10, y + 80, w - 20, 24, soc, hc);
+        _gfx->setTextSize(2); _gfx->setTextColor(C_DIM);
+        snprintf(b, sizeof(b), "%.0fW", packs[p].voltage * packs[p].current); _gfx->setCursor(x + 10,  y + 114); _gfx->print(b);
+        snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp);           _gfx->setCursor(x + 96,  y + 114); _gfx->print(b);
+        snprintf(b, sizeof(b), "d%umV", dmv);                                 _gfx->setCursor(x + 176, y + 114); _gfx->print(b);
+    } else if (tier == 2) {                            // large half
+        drawCellTags(x, y, w, p, 2, true);
+        _gfx->setTextSize(5); _gfx->setTextColor(hc);
+        snprintf(b, sizeof(b), "%u%%", soc); _gfx->setCursor(x + 6, y + 24); _gfx->print(b);
+        _gfx->setTextSize(2); _gfx->setTextColor(C_ACCENT);
+        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 68); _gfx->print(b);
+        drawSocBarH(x + 6, y + 90, w - 12, 20, soc, hc);
+        _gfx->setTextColor(C_TEXT);
+        snprintf(b, sizeof(b), "%+.1fA", packs[p].current); _gfx->setCursor(x + 6, y + 116); _gfx->print(b);
+        snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp); _gfx->setCursor(x + w - 56, y + 116); _gfx->print(b);
+    } else if (tier == 3) {                            // column: %, voltage, tall bar
+        drawCellTags(x, y, w, p, 2, false);
+        _gfx->setTextSize(3); _gfx->setTextColor(hc);
+        snprintf(b, sizeof(b), "%u%%", soc); _gfx->setCursor(x + 6, y + 24); _gfx->print(b);
+        _gfx->setTextSize(2); _gfx->setTextColor(C_ACCENT);
+        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 50); _gfx->print(b);
+        drawSocBarV(x + (w - 44) / 2, y + 74, 44, 60, soc, hc);
+    } else {                                           // 4-pack slim column: fat bar + big %
+        drawCellTags(x, y, w, p, 1, false);
+        uint8_t ps = (soc >= 100) ? 2 : 3;             // shrink one step so "100%" fits 79 px
+        _gfx->setTextSize(ps); _gfx->setTextColor(hc);
+        snprintf(b, sizeof(b), "%u%%", soc);
+        _gfx->setCursor(x + (w - (int)strlen(b) * 6 * ps) / 2, y + 22); _gfx->print(b);
+        drawSocBarV(x + (w - 36) / 2, y + 50, 36, 78, soc, hc);
+        _gfx->setTextSize(1); _gfx->setTextColor(C_ACCENT);
+        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage);
+        _gfx->setCursor(x + (w - (int)strlen(b) * 6) / 2, y + 136); _gfx->print(b);
     }
 }
 
-// ── Empty-cell summary helpers ────────────────────────────────────────────────
-
-static void _summaryTimeStr(char* out, size_t len, float totalWh) {
-    bool riding = (logCurrentMode() == LOG_RIDE);
-    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
-    if (!riding)  { snprintf(out, len, "Fleet info"); return; }
-    if (!ready)   { snprintf(out, len, "~-- min");    return; }
-    uint16_t m = (uint16_t)(totalWh / g_ridePowerEma_W * 60.0f + 0.5f);
-    if (m >= 60) snprintf(out, len, "~%uh%02um", m/60, m%60);
-    else         snprintf(out, len, "~%u min",   m);
-}
-
-// Wide panel — fills a full 320px row (both cells in a row empty)
-static void _drawSummaryWide(uint16_t ry, uint8_t nValid,
-                              float totalWh, float totalAh) {
-    bool riding = (logCurrentMode() == LOG_RIDE);
-    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
-
-    _gfx->fillRect(0, ry, 320, CELL_H, C_BG);
-    _gfx->drawRect(0, ry, 320, CELL_H, C_ACCENT);
-    _gfx->drawRect(1, ry+1, 318, CELL_H-2, C_ACCENT);
-
-    // Left half — time estimate
-    char ts[16]; _summaryTimeStr(ts, sizeof(ts), totalWh);
+// Bottom band (tiers 1-3): whole-buggy worst-pack time remaining + fleet Wh.
+static void drawRuntimeBand(int y) {
+    _gfx->fillRect(0, y, 320, 170 - y, C_HDR);
+    char rt[16]; runtimeString(rt, sizeof(rt));
+    bool warm = (strstr(rt, "--") != NULL);
     _gfx->setTextSize(2);
-    _gfx->setTextColor(riding && ready ? C_GOOD : (riding ? C_DIM : C_ACCENT));
-    _gfx->setCursor(6, ry + 4);
-    _gfx->print(ts);
-
-    _gfx->setTextSize(1);
+    _gfx->setTextColor(warm ? C_DIM : C_GOOD);
+    _gfx->setCursor(6, y + 1); _gfx->print(rt);
+    uint8_t list[NUM_PACKS]; uint8_t n = buildConnectedList(list);
+    char wh[16]; snprintf(wh, sizeof(wh), "%.0f Wh", fleetRemainingWh(list, n));
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(6, ry + 26);
-    if (riding && ready) {
-        char pw[30];
-        snprintf(pw, sizeof(pw), "@ %.0f W avg (%u samples)", g_ridePowerEma_W, (unsigned)g_ridePowerN);
-        _gfx->print(pw);
-    } else if (riding) {
-        _gfx->print("(measuring power draw...)");
-    } else {
-        _gfx->print("start riding for estimate");
-    }
-
-    // Divider
-    _gfx->drawFastVLine(160, ry + 6, CELL_H - 12, C_DIM);
-
-    // Right half — capacity breakdown
-    _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(166, ry + 4);
-    char hdr[16]; snprintf(hdr, sizeof(hdr), "%uP capacity:", nValid);
-    _gfx->print(hdr);
-
-    _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(166, ry + 16);
-    char wh[20]; snprintf(wh, sizeof(wh), "%.0f Wh left", totalWh);
-    _gfx->print(wh);
-
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(166, ry + 28);
-    char mah[22]; snprintf(mah, sizeof(mah), "%.0f mAh left", totalAh * 1000.0f);
-    _gfx->print(mah);
-
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(166, ry + 40);
-    char des[32];
-    snprintf(des, sizeof(des), "Design: %.0fWh/%.0fmAh",
-             nValid * PACK_DESIGN_WH, nValid * PACK_DESIGN_AH * 1000.0f);
-    _gfx->print(des);
-
-    uint16_t sumSoc = 0;
-    for (uint8_t j = 0; j < NUM_PACKS; j++) if (packs[j].valid) sumSoc += packs[j].soc;
-    _gfx->setCursor(166, ry + 54);
-    char av[16]; snprintf(av, sizeof(av), "avg SoC: %u%%", nValid ? sumSoc/nValid : 0);
-    _gfx->print(av);
+    _gfx->setCursor(320 - (int)strlen(wh) * 12 - 6, y + 1); _gfx->print(wh);
 }
 
-// Narrow panel — fills one 160×77 cell slot
-static void _drawSummaryNarrow(uint16_t cx, uint16_t cy, uint8_t nValid,
-                                float totalWh, float totalAh) {
-    bool riding = (logCurrentMode() == LOG_RIDE);
-    bool ready  = (g_ridePowerN >= 3 && g_ridePowerEma_W >= 20.0f);
-
-    _gfx->fillRect(cx, cy, CELL_W, CELL_H, C_BG);
-    _gfx->drawRect(cx, cy, CELL_W, CELL_H, C_ACCENT);
-    _gfx->drawRect(cx+1, cy+1, CELL_W-2, CELL_H-2, C_ACCENT);
-
-    char ts[16]; _summaryTimeStr(ts, sizeof(ts), totalWh);
-    _gfx->setTextSize(2);
-    _gfx->setTextColor(riding && ready ? C_GOOD : (riding ? C_DIM : C_ACCENT));
-    _gfx->setCursor(cx + 4, cy + 4);
-    _gfx->print(ts);
-
-    _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(cx + 4, cy + 26);
-    char wh[14]; snprintf(wh, sizeof(wh), "%.0fWh left", totalWh);
-    _gfx->print(wh);
-
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(cx + 4, cy + 50);
-    _gfx->setTextSize(1);
-    if (riding && ready) {
-        char pw[16]; snprintf(pw, sizeof(pw), "@ %.0fW avg", g_ridePowerEma_W);
-        _gfx->print(pw);
-    } else {
-        char np[14]; snprintf(np, sizeof(np), "%uP of %u ports", nValid, NUM_PACKS);
-        _gfx->print(np);
-    }
-}
-
-// ── Screen 0: Fleet overview with adaptive empty-cell summary ─────────────────
+// ── Screen 0: HOME — dynamic, connected-only, contiguous, adaptive density ────
 static void drawScreenFleet() {
     drawHeader();
+    _gfx->fillRect(0, HDR_H, 320, 170 - HDR_H, C_BG);   // clear content region
 
-    // Compute fleet totals once — shared by cells and summary panels
-    float totalWh = 0.0f, totalAh = 0.0f;
-    uint8_t nValid = 0;
-    for (uint8_t j = 0; j < NUM_PACKS; j++) {
-        if (!packs[j].valid) continue;
-        totalWh += (packs[j].soc / 100.0f) * PACK_DESIGN_WH;
-        totalAh += (packs[j].soc / 100.0f) * PACK_DESIGN_AH;
-        nValid++;
-    }
-
-    // Draw valid pack cells
-    for (uint8_t i = 0; i < NUM_PACKS; i++)
-        if (packs[i].valid) drawFleetCell(i);
-
-    // Fill empty cell space with fleet summary
-    if (nValid == 0) {
-        _gfx->fillRect(0, HDR_H, 320, 2 * CELL_H, C_BG);
+    uint8_t list[NUM_PACKS]; uint8_t n = buildConnectedList(list);
+    const int Y0 = HDR_H;                               // 16
+    if (n == 0) {
         _gfx->setTextSize(2); _gfx->setTextColor(C_NODATA);
-        _gfx->setCursor(72, 84); _gfx->print("No packs");
-    } else if (nValid < NUM_PACKS) {
-        bool e0 = !packs[0].valid, e1 = !packs[1].valid;
-        bool e2 = !packs[2].valid, e3 = !packs[3].valid;
-
-        if (e2 && e3 && !e0 && !e1) {
-            _drawSummaryWide(CY[2], nValid, totalWh, totalAh);   // bottom row free
-        } else if (e0 && e1 && !e2 && !e3) {
-            _drawSummaryWide(CY[0], nValid, totalWh, totalAh);   // top row free
-        } else {
-            // Mixed or single empty — narrow panel per empty slot
-            for (uint8_t i = 0; i < NUM_PACKS; i++)
-                if (!packs[i].valid)
-                    _drawSummaryNarrow(CX[i], CY[i], nValid, totalWh, totalAh);
-        }
+        _gfx->setCursor(40, 80); _gfx->print("No packs connected");
+        return;
     }
+    const bool band   = (n <= 3);                       // 4-pack drops the band (bars win)
+    const int  BAND_Y = 154;
+    const int  H = band ? (BAND_Y - Y0) : (170 - Y0);   // 138 (with band) or 154 (4-pack)
 
+    if (n == 1) {
+        drawHomeCell(0, Y0, 320, H, list[0], 1);
+    } else if (n == 2) {
+        drawHomeCell(0,   Y0, 158, H, list[0], 2);
+        drawHomeCell(162, Y0, 158, H, list[1], 2);
+    } else if (n == 3) {
+        drawHomeCell(0,   Y0, 105, H, list[0], 3);
+        drawHomeCell(107, Y0, 105, H, list[1], 3);
+        drawHomeCell(214, Y0, 106, H, list[2], 3);
+    } else {                                            // n == 4
+        for (uint8_t k = 0; k < 4; k++)
+            drawHomeCell(k * 80, Y0, 79, H, list[k], 4);
+    }
+    if (band) drawRuntimeBand(BAND_Y);
 }
 
 // ── Screen 1: Per-pack Detail ─────────────────────────────────────────────────
@@ -805,8 +833,8 @@ void displayInit() {
     pinMode(TFT_BL_PIN, OUTPUT);
     digitalWrite(TFT_BL_PIN, HIGH);
 
-    pinMode(LIGHT_FET_PIN, OUTPUT);
-    digitalWrite(LIGHT_FET_PIN, LOW);
+    // GPIO13 (LIGHT_FET) retired — it is now NeoPixel status strip 2 (Led.ino / ledInit()).
+    // Display must NOT drive GPIO13 or it fights the strip's RMT signal.
 
     pinMode(BUTTON1_PIN, INPUT_PULLUP);
     pinMode(BUTTON2_PIN, INPUT_PULLUP);
@@ -829,8 +857,17 @@ void displayInit() {
                               3, true, 170, 320, 35, 0, 35, 0);
     if (!psramFound()) Serial.println("[DISP] WARNING: no PSRAM — canvas falls back to heap, WiFi may OOM");
     _canvas = new Arduino_Canvas(320, 170, _hw);
-    if (!_canvas) { Serial.println("[DISP] FATAL: canvas alloc failed"); while (1) delay(1000); }
-    _canvas->begin();
+    // Harden: the 320x170 RGB565 framebuffer is ~106 KB. With no PSRAM it comes from
+    // internal DRAM and can fail. begin() returns false / getFramebuffer() is null on
+    // failure. Degrade gracefully (disable the display) instead of hanging — the LEDs
+    // and the Core-1 keep-alive must keep running no matter what.
+    bool canvasOk = _canvas && _canvas->begin() && _canvas->getFramebuffer();
+    if (!canvasOk) {
+        Serial.println("[DISP] FATAL: no framebuffer (no PSRAM + low heap) — display DISABLED, keep-alive continues");
+        gDisplayOk = false;
+        return;
+    }
+    gDisplayOk = true;
     _gfx = _canvas;
     _gfx->fillScreen(0);
 
@@ -882,6 +919,9 @@ static void checkDisconnects(uint32_t now) {
 
 void displayLoop() {
     if (gSleepCountdownActive) return;  // PowerManager owns the display
+    if (!gDisplayOk) return;            // framebuffer alloc failed — LEDs + keep-alive still run
+
+    runtimeSample();                    // keep the worst-pack runtime window warm on every screen
 
     uint32_t now = millis();
 
@@ -933,16 +973,16 @@ void displayLoop() {
     }
 
     // ── Normal button handling
+    if (b1 == LOW || b2 == LOW || b3 == LOW) _lastInputMs = now;   // any press resets the idle timer
 
-    // BTN2+BTN3 combo: toggle light FET (checked first to suppress individual actions)
+    // BTN2+BTN3 combo: toggle the (now indicator-only) light flag — GPIO13 is NeoPixel strip 2
     static bool     _comboFired = false;
     static uint32_t _comboTs    = 0;
     if (b2 == LOW && b3 == LOW) {
         if (_comboTs == 0) _comboTs = now;
         if (!_comboFired && (now - _comboTs) >= DEBOUNCE_MS) {
             _comboFired = true;
-            gLightOn    = !gLightOn;
-            digitalWrite(LIGHT_FET_PIN, gLightOn ? HIGH : LOW);
+            gLightOn    = !gLightOn;   // flag only — GPIO13 is NeoPixel strip 2 now (no FET drive)
             _b2Ts = now;  // reset BTN2 timer — suppresses screen-change on release
             _b3Ts = now;  // reset BTN3 timer — suppresses screen-change on release
         }
@@ -958,7 +998,7 @@ void displayLoop() {
         uint32_t held = now - _b1Ts;
         if (held >= DEBOUNCE_MS && held < SLEEP_HOLD_MS) {
             if (_screen == 0)      wifiToggle();
-            else if (_screen == 1) _detailPack = (_detailPack + 1) % NUM_PACKS;
+            else if (_screen == 1) _detailPack = nextConnectedPack(_detailPack);  // cycle connected packs only
         }
     }
     _b1Prev = b1;
@@ -984,6 +1024,21 @@ void displayLoop() {
         }
     }
     _b3Prev = b3;
+
+    // ── Dynamic home: charging auto-switch + idle auto-return + connected-only detail ──
+    // Charging auto-switch fires ONCE on the rising edge (screen 2) so the user can still
+    // navigate away; when charging stops it returns Home if still on the charging screen.
+    bool charging = (logCurrentMode() == LOG_CHARGE);
+    static bool _wasCharging = false;
+    if (charging && !_wasCharging)              { _screen = 2; _dispLast = 0; }   // charging started
+    else if (!charging && _wasCharging && _screen == 2) { _screen = 0; _dispLast = 0; } // charging ended
+    _wasCharging = charging;
+    // Idle auto-return to the dynamic Home (Fleet) — never while charging.
+    if (!charging && _screen != 0 && (now - _lastInputMs) > HOME_IDLE_MS) { _screen = 0; _dispLast = 0; }
+    // Detail (screen 1) must never sit on a disconnected pack.
+    if (_screen == 1 && !packConnected(_detailPack) && anyConnected()) {
+        _detailPack = nextConnectedPack(_detailPack); _dispLast = 0;
+    }
 
     // Alert flashing needs 250 ms refresh; BMS data is fine at 500 ms
     bool alertActive = (_alertEnd && now < _alertEnd);
@@ -1014,6 +1069,7 @@ void displaySleepOverlay(uint32_t heldMs) {
         return;
     }
     gSleepCountdownActive = true;
+    if (!gDisplayOk) return;   // no framebuffer — skip drawing, sleep still proceeds
 
     uint32_t clamped = heldMs > SLEEP_HOLD_MS ? SLEEP_HOLD_MS : heldMs;
     uint8_t  pct     = (uint8_t)(clamped * 100UL / SLEEP_HOLD_MS);

@@ -47,10 +47,14 @@ void uartLoop() {
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (pack[i].read()) {
-            Serial.print("[RX] pack"); Serial.print(i + 1);
-            Serial.print(" SOC="); Serial.print(pack[i].soc());
-            Serial.print("% V="); Serial.print(pack[i].voltage(), 2);
-            Serial.print(" CYC="); Serial.println(pack[i].cycleCount());
+            static uint32_t _lastPrint[NUM_PACKS] = {0};
+            if (now - _lastPrint[i] >= 1000) {                 // throttle log to ~1/s per pack (readable)
+                _lastPrint[i] = now;
+                Serial.print("[RX] pack"); Serial.print(i + 1);
+                Serial.print(" SOC="); Serial.print(pack[i].soc());
+                Serial.print("% V="); Serial.print(pack[i].voltage(), 2);
+                Serial.print(" CYC="); Serial.println(pack[i].cycleCount());
+            }
             // Accumulate Wh from the previous interval using the OLD V and A
             // (Euler forward: treat the interval as constant at the last reading)
             if (packs[i].valid) {

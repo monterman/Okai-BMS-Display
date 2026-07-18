@@ -3,6 +3,7 @@
 // No delay() anywhere. All timing via millis().
 
 #include "Config.h"
+#include "Led.h"
 #include <driver/gpio.h>
 
 void setup() {
@@ -15,7 +16,10 @@ void setup() {
 
   powerManagerInit(); // configures EXT0 wakeup before anything else
   uartInit();         // open Serial1 (GPIO2 TX) BEFORE the heartbeat task starts
-  heartbeatInit();    // spawns the Core-0 keep-alive task
+  heartbeatInit();    // spawns the Core-1 (prio 18) keep-alive task
+  ledInit();          // NeoPixel bars on GPIO10/13 — EARLY, so the keep-alive
+                      // indicator + strips are live and cleared BEFORE the display /
+                      // fs / wifi init (which must never gate or crash the indicator)
   loggerInit();       // mounts LittleFS first (packlabelInit needs fsReady)
   packlabelInit();    // loads labels, session counters, initialises DS3231
   packRegistryInit(); // ensures /packs dir, ready to identify packs
@@ -27,9 +31,11 @@ void setup() {
 
 void loop() {
   powerManagerLoop(); // hold BTN1 ≥ 4 s → deep sleep (runs before display reads button)
-  heartbeatLoop();    // no-op — keep-alive now runs on its own Core-0 task
+  heartbeatLoop();    // no-op — keep-alive now runs on its own Core-1 task
   uartLoop();         // Priority 2 — read pack data
   loggerLoop();       // Priority 3 — flush to LittleFS
   displayLoop();      // Priority 4 — update TFT
   wifiServerLoop();   // Priority 5 — serve CSV if WiFi active
+  ledLoop();          // Priority 6 — NeoPixel bars + keep-alive indicator (non-blocking)
+  diagLoop();         // bench cadence log over USB serial (bench-only)
 }

@@ -10,13 +10,19 @@ The 1.9" ST7789 uses an **8-bit parallel bus** (not SPI), consuming most high-nu
 | Display control (CS/DC/RST/WR/RD) | 5, 6, 7, 8, 9 |
 | Backlight | 38 |
 | UART0 (USB-C debug) | 43 (TX), 44 (RX) |
-| Boot button | 0 |
-| Button 2 | 14 |
+| Buttons | 0 (BTN1), 14 (BTN2), 21 (BTN3) |
 | Power enable | 15 |
 | Battery ADC | 4 |
-| PSRAM / Flash | 10, 11, 12, 13 |
-| Strapping | 3, 45, 46 |
-| **Free for external use** | **1, 2, 16, 17, 18, 21** |
+| Pack UART RX | 1 (P1), 16 (P2), 17 (P3), 18 (P4) |
+| Pack shared TX (heartbeat) | 2 |
+| RTC DS3231 (I²C) | 11 (SDA), 12 (SCL) |
+| NeoPixel status bars | 10 (strip 1), 13 (strip 2) |
+| Strapping — avoid | 3, 45, 46 |
+| **Free remaining** | **none clean** — only 43/44 (if debug → USB-CDC) or 3 (strapping, caution) |
+
+> **Corrected 2026-06-07:** GPIO 10–13 are NOT PSRAM (OPI PSRAM is internal to the package). They are
+> general-purpose and are now allocated: RTC on 11/12, NeoPixel status bars on 10/13. The earlier "free =
+> 1,2,16,17,18,21" was wrong — those are the pack UARTs + BTN3. Authoritative pin map: `Board_Wiring.md`.
 
 ## Port Assignment
 
