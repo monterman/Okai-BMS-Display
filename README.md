@@ -4,7 +4,7 @@ Real-time telemetry display, CSV logger, and pack health tracker for up to four 
 
 **Hardware:** LILYGO T-Display-S3 (ESP32-S3 · 1.9" 320×170 ST7789 TFT)  
 **Protocol:** Ruipu/Okai 9600 baud 8N1, 36-byte frames, Dallas/Maxim 1-wire CRC  
-**Firmware version:** 0.2.0
+**Firmware version:** 0.3.0
 
 ---
 
@@ -61,7 +61,13 @@ Press **BTN1** on Screen 0, connect to AP `OkaiBMS` / `12345678`, open `http://1
 **Each pack RX line requires a 1 kΩ pull-up to 3.3 V** (open-collector output from the BMS green wire).  
 All four pack RX lines share one TX (GPIO 2) — a single heartbeat reaches all packs simultaneously.
 
-See [`docs/Board_Wiring.md`](docs/Board_Wiring.md) and [`docs/connector-pinout.html`](docs/connector-pinout.html) for full wiring diagrams.
+See [`docs/Board_Wiring.md`](docs/Board_Wiring.md) — **the authority for wiring** — plus
+[`docs/connector-pinout.html`](docs/connector-pinout.html) for interactive diagrams and
+[`docs/Waterproof_Connector_Wiring.md`](docs/Waterproof_Connector_Wiring.md) for the IP67 connectors.
+
+> **Which pack is which** is answered by [`docs/Pack_Registry.md`](docs/Pack_Registry.md), not by any
+> wiring doc. Pack #1 is `CYC-37`; `CYC-8229` is **not** pack #1. Older tables say otherwise and are
+> superseded.
 
 ---
 
@@ -125,3 +131,8 @@ fingerprinting, and multi-port support for this project.
 | [`docs/Board_Wiring.md`](docs/Board_Wiring.md) | Physical wiring, pull-up resistors |
 | [`docs/UART_Topology.md`](docs/UART_Topology.md) | GPIO and port assignments |
 | [`docs/connector-pinout.html`](docs/connector-pinout.html) | Interactive wiring diagrams (open in browser) |
+| [`docs/Waterproof_Connector_Wiring.md`](docs/Waterproof_Connector_Wiring.md) | West City IP67 connector pinouts, wire colours, Yaxiao enclosure exit. ⚠️ Its pack-number columns are superseded — `Pack_Registry.md` is the authority on pack identity |
+| [`docs/battery-quarantine-and-charger-notes.md`](docs/battery-quarantine-and-charger-notes.md) | Pack quarantine procedure and charger notes |
+| [`docs/Build.md`](docs/Build.md) | Build and flashing notes |
+| [`docs/Brief.md`](docs/Brief.md) | Original project brief |
+| [`docs/tana-project-summary-2026-05-17.md`](docs/tana-project-summary-2026-05-17.md) | Project summary snapshot, 2026-05-17 |
