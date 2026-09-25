@@ -24,6 +24,45 @@ Pack #5 read **CYC-78** in May and **CYC-79** on 2026-07-27. **The fingerprint i
 
 ---
 
+## 🔴 FLEET TEST — 2026-09-25: pack #5 RETIRED, every other pack passed
+
+**Test used (owner's, and it works):** one pack at a time on a known-good port, run **VESC motor detection**
+from the phone. Detection spins the motor at 10–20 A. A pack whose keep-alive is not reaching it **sleeps and
+cuts out above ~4 A**; a healthy pack rides it out. Bench only, no water, repeatable.
+
+| Pack (physical label) | Port in the failing session | Result |
+|---|---|---|
+| **#5** (CYC-79) | port 3 | ❌ **FAILS — cuts out under load. RETIRED 2026-09-25.** |
+| **#2** | port 1 | ✅ passes |
+| **#3** | port 2 | ✅ passes |
+| **#1** (CYC-37), **#4**, and the two unlabelled spares | — | ✅ all pass |
+
+**What is wrong with #5.** Its keep-alive wire. The owner re-soldered every pack's signal pigtail shortly
+before this session; #5's is the one that did not survive. The logs prove the *telemetry* wire is fine —
+#5 reported voltage, current and cell data normally in sessions 071/072/073 — so the fault is specific to the
+**red / centre wire (BMS RX, the shared keep-alive line)**, not a wholesale TX/RX swap, which would have made
+the pack invisible to the display.
+
+**Why one bad pack took the whole system down.** #5 sleeps the moment it is loaded, so the remaining two packs
+absorb the entire ~3 kW. They sag harder, approach their own limits, and the session dies. See
+[`2026-09-25-pack-dropout-analysis.md`](2026-09-25-pack-dropout-analysis.md).
+
+**Still to determine when #5 is opened for repair — one meter reading decides it:** resistance between the
+**red** and **black** pins on its connector, compared against a known-good pack.
+
+- **Open / high, like the others** → the keep-alive simply never reaches #5. It only ever harmed itself, and the
+  other packs died from carrying its share of the load.
+- **Near zero / much lower than the others** → red is shorted to ground, which drags down the **shared**
+  keep-alive bus and starves *every* pack of its heartbeat. That would mean #5 was actively killing the others,
+  and the same fault would return the instant it is plugged back in.
+
+Record the answer here when the repair happens.
+
+**Ride configuration until #5 is repaired and re-tested:** use three good packs. Two packs at 3 kW sag hard
+enough to be marginal on their own — that is what the load data shows, independent of the #5 fault.
+
+---
+
 ## ⭐ REPORTING RULE + SESSION PORT MAP (owner instruction, 2026-07-24)
 
 > **RULE (owner):** logs identify packs by **CYC count** (each port broadcasts it) — use CYC **only** to decode which pack is which, then **ALWAYS report results by the owner's LABEL number (#N), never by CYC.** The owner cares about the label number, not the cycle count. Do the CYC→label mapping silently.
