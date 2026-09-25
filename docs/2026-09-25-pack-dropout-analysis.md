@@ -60,8 +60,10 @@ at least once mid-session, which matches the owner's account of waiting ~2 minut
 
 **3.3 The packs stop *talking* before they disappear.** The final frames before each death are stale:
 identical lines repeated, and physically impossible readings — P1 logged at **+30.4 A** in the same
-sample where P2 reads **−31.6 A** (074, up=482). `Logger.ino` re-writes a pack's last received frame
-until `PACK_CONNECTED_MS` (5 s) expires, then drops it. So those readings are *the absence of new
+sample where P2 reads **−31.6 A** (074, up=482). `Logger.ino` re-writes a pack's last received frame until the pack is marked invalid, then drops it.
+**Correction (2026-09-25, found during the fix):** that timeout is **10 s, hard-coded in `UART.ino:113`** —
+*not* `PACK_CONNECTED_MS` (5 s), which only drives the display's own `packConnected()`. So the screen can show
+"No packs connected" up to 5 seconds before the log writes anything. Worth unifying the two timeouts. So those readings are *the absence of new
 telemetry*, not measurements. A BMS tripping purely on over-current normally keeps transmitting —
 this looks more like the pack going to sleep or losing its BMS supply.
 
@@ -122,7 +124,7 @@ rather than dead.
 ## 6. Defects found in the firmware while analysing
 
 1. **Stale frames are logged as live data.** When a pack stops transmitting, `Logger.ino` re-writes
-   its last received frame for up to 5 s instead of marking it stale or omitting it. This produced the
+   its last received frame for up to 10 s instead of marking it stale or omitting it. This produced the
    impossible +30 A readings and disguises exactly the event being hunted. A `stale` flag or a gap in
    the row would make dropouts unmistakable.
 2. **No log entry when a pack drops or rejoins.** The pack set is recorded only in the session header,
@@ -133,6 +135,28 @@ rather than dead.
    self-dating.
 
 ---
+
+## 6b. FIXED — 2026-09-25, flashed
+
+Defects 1 and 2 are fixed and **on the device** (`cb162b0`, flashed 2026-09-25, +944 B flash, +32 B RAM):
+
+- **`Stale` and `Age_ms` columns appended** after `Warn`. `Stale=1` means the row is an echo of the previous one;
+  `Age_ms` is how old the frame was. Existing columns unchanged and in the same order.
+- **Header carries `FMT 2`.** Files with no `FMT` token are format 1 — that is how logs 069-074 are told apart from
+  everything written from now on. Old (16 columns) and new (18) should not be pasted into one spreadsheet.
+- **Dropout and rejoin markers**, as `####` comment lines, carrying uptime, port, label, last-known
+  voltage/current/SOC, plus `hb=` (keep-alive count) and `hbAge=` (time since the last beat). Two consequences worth
+  knowing: `hbAge` at the instant a pack goes quiet **separates the two competing hypotheses in section 4** — a beating
+  keep-alive with a pack dying anyway is pack-side, a slipped keep-alive is display-side; and **`hb=` falling between
+  two markers proves the board rebooted**, since the counter restarts at zero. Section 3.2's reboot inference becomes
+  provable from a single log file.
+- A dropout also triggers the existing file checkpoint, so a power loss right after one cannot lose the evidence.
+
+**Reading the markers:** `up=` is when the firmware gave up (10 s after the silence started); **`lastframe=` is the
+actual event time.** Read the second number. Also, `Stale=1` can only appear in a RIDE log — the 30 s charge interval
+is longer than the 10 s timeout, so its absence in a charge log means nothing.
+
+Defect 3 (stale RTC) is still open — join rows and markers on **UpSec**, not Timestamp.
 
 ## 7. Open
 
