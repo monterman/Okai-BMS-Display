@@ -28,7 +28,11 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 static bool     _timeSynced   = false;
 static uint32_t _syncEpochSec = 0;  // wall-clock second at last sync
-static uint32_t _syncMillisSec = 0; // millis()/1000 at last sync
+static uint32_t _syncMillisSec = 0; // millis()/1000 at last sync — THIS BOOT only
+// 2026-07-26 - true when the epoch came from flash rather than a live browser
+// sync. Time then runs forward correctly but sits behind reality by however long
+// the board was powered off, so logs say "restored" instead of "synced".
+static bool     _timeRestored = false;
 
 static uint8_t  _labels[NUM_PACKS] = {0}; // 0=unassigned, 1-8=label
 static uint16_t _sessRide   = 0;
@@ -45,15 +49,26 @@ static void loadTimeFromFlash() {
         f.read((uint8_t*)&tr, sizeof(tr));
         f.close();
         _syncEpochSec  = tr.epochSec;
-        _syncMillisSec = tr.millisSec;
         _timeSynced    = true;
         // Verify sanity: epoch must be after 2024-01-01
         if (_syncEpochSec < 1704067200UL) { _timeSynced = false; return; }
-        int32_t  _drift = (int32_t)((uint32_t)(millis()/1000) - _syncMillisSec);
-        uint32_t nowEst = _syncEpochSec + (uint32_t)(_drift > 0 ? _drift : 0);
-        Serial.printf("[TIME] restored from flash: ~%lu (drift: %lus since sync)\n",
-                      (unsigned long)nowEst,
-                      (unsigned long)(millis()/1000 - _syncMillisSec));
+
+        // 2026-07-26 - RE-ANCHOR to this boot. Do NOT restore tr.millisSec.
+        // WHAT WAS WRONG: millisSec is a millis() reading, which is meaningless
+        // across a reboot because millis() restarts at zero. Restoring it made
+        // timeNowSec() compute a NEGATIVE elapsed, which is clamped to 0 — so the
+        // clock froze permanently at the instant of the last browser sync. Every
+        // row of every log carried one identical timestamp; the 2026-07-25 logs
+        // all read 2026-07-25T03:00:01 on every single line, across three separate
+        // sessions. Anchoring to the current boot makes time advance again.
+        _syncMillisSec = millis() / 1000;
+
+        // We cannot know how long the board was powered off, so this clock is
+        // behind reality until the browser syncs it. Flag it rather than lie.
+        _timeRestored = true;
+        Serial.printf("[TIME] restored from flash: %lu (STALE — board-off time is "
+                      "unknown; open the dashboard to re-sync)\n",
+                      (unsigned long)_syncEpochSec);
     } else {
         if (f) f.close();
     }
@@ -133,7 +148,8 @@ void packlabelInit() {
 }
 
 // ── Time ─────────────────────────────────────────────────────────────────────
-bool timeIsSynced() { return _timeSynced; }
+bool timeIsSynced()   { return _timeSynced; }
+bool timeIsRestored() { return _timeRestored; }
 
 time_t timeNowSec() {
     if (!_timeSynced) return 0;
@@ -151,6 +167,7 @@ void timeSyncSet(int64_t browserEpochMs) {
     _syncEpochSec  = epochSec;
     _syncMillisSec = millis() / 1000;
     _timeSynced    = true;
+    _timeRestored  = false;   // a live browser sync clears the stale flag
 
 #ifdef USE_DS3231
     if (_rtcOk) {
@@ -194,17 +211,26 @@ uint16_t sessChargeNext() { if (_sessCharge < 999) _sessCharge++; return _sessCh
 // ── Filename builder ──────────────────────────────────────────────────────────
 void makeLogFilename(char *out, size_t outLen,
                      char type, uint16_t session, uint8_t seg) {
+    // 2026-07-26 - Owner request: name the device, then say plainly what the log
+    // is, because these files sit alongside logs from other projects and "R_"
+    // means nothing once they are off the device.
+    //   /Okai_RIDE_20260726_057_1.csv
+    //   /Okai_CHRG_20260726_012_1.csv
+    // RIDE and CHRG are both 4 chars so the names align in the file list.
+    // Longest form is 29 chars + NUL; callers pass a 44-byte buffer.
+    const char *kind = (type == 'R') ? "RIDE" : "CHRG";
+
     if (_timeSynced) {
         time_t t = timeNowSec();
         struct tm tm;
         gmtime_r(&t, &tm);
-        snprintf(out, outLen, "/%c_%04d%02d%02d_%03u_%u.csv",
-                 type,
+        snprintf(out, outLen, "/Okai_%s_%04d%02d%02d_%03u_%u.csv",
+                 kind,
                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                  (unsigned)session, seg);
     } else {
-        snprintf(out, outLen, "/%c_S%03u_%u.csv",
-                 type, (unsigned)session, seg);
+        snprintf(out, outLen, "/Okai_%s_S%03u_%u.csv",
+                 kind, (unsigned)session, seg);
     }
 }
 

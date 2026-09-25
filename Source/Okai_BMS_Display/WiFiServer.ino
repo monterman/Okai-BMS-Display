@@ -85,8 +85,17 @@ static void handleRoot() {
     h += " &nbsp; IP: "; h += WiFi.softAPIP().toString();
     h += " &nbsp; RTC: "; h += rtcStr;
 
+    // 2026-07-26 - surface the balance phase here too, so the dashboard agrees with
+    // the device screen. "CHARGE" alone did not distinguish bulk from the trickle
+    // that lets the balancer bleed the high cells.
+    bool anyBalancing = false;
+    for (uint8_t i = 0; i < NUM_PACKS; i++)
+        if (packs[i].valid && packs[i].isBalancing) { anyBalancing = true; break; }
+
     const char *modeStr = (logCurrentMode() == LOG_RIDE)   ? "&#128694; RIDE" :
-                          (logCurrentMode() == LOG_CHARGE) ? "&#9889; CHARGE" : "IDLE";
+                          (logCurrentMode() == LOG_CHARGE) ? (anyBalancing ? "&#9889; CHARGE &mdash; balancing"
+                                                                           : "&#9889; CHARGE")
+                                                           : "IDLE";
     h += " &nbsp; Log: <b>"; h += modeStr; h += "</b></p>";
 
     // ── pack table
@@ -107,17 +116,24 @@ static void handleRoot() {
         float delta   = packs[i].cellHigh - packs[i].cellLow;
         float powerW  = packs[i].voltage * packs[i].current;
         float availWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        const char *cls  = (delta >= CELL_DELTA_POOR_V) ? "poor" :
-                           (delta >= CELL_DELTA_WARN_V) ? "warn" : "good";
-        const char *htag = (delta >= CELL_DELTA_POOR_V) ? "POOR" :
-                           (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+        // 2026-07-26 - Verdict comes from the rest-gated helper, never from the
+        // live delta. Under load the spread is an internal-resistance reading,
+        // not a health reading. See Config.h CELL_DELTA_WARN_V.
+        const char *htag = healthTag(packs[i]);
+        const char *cls  = (strcmp(htag, "POOR") == 0) ? "poor" :
+                           (strcmp(htag, "WARN") == 0) ? "warn" : "good";
+        delta = healthDelta(packs[i]);   // show the number actually being judged
         const char *cycStr = packRec[i].known ? packRec[i].cycID : "---";
         char row[320];
+        // 2026-07-26 - current preformatted so a balancing trickle shows "<0.00A"
+        // instead of "+0.00A"; same helper the device screen uses (Config.h).
+        char ampsCell[12];
+        fmtAmps(ampsCell, sizeof(ampsCell), packs[i].current, 2, "A");
         snprintf(row, sizeof(row),
-            "<td>%s</td><td>%u%%</td><td>%.2fV</td><td>%+.2fA</td>"
+            "<td>%s</td><td>%u%%</td><td>%.2fV</td><td>%s</td>"
             "<td>%+.0fW</td><td>%.0f Wh</td><td>%u mV</td>"
             "<td>%u&#176;C</td><td>%s</td><td class='%s'>%s</td></tr>",
-            lbl, (unsigned)packs[i].soc, packs[i].voltage, packs[i].current,
+            lbl, (unsigned)packs[i].soc, packs[i].voltage, ampsCell,
             powerW, availWh,
             (unsigned)(delta * 1000.0f + 0.5f),
             (unsigned)packs[i].maxTemp, cycStr,
@@ -167,10 +183,21 @@ static void handleRoot() {
         root.close();
         if (!any) h += F("<tr><td colspan='4' class='dim'>No log files yet</td></tr>");
         h += F("</table>");
-        h += F("<p><a class='btn' href='/clearall?_t=");
+        // 2026-07-26 - Big red target with a confirm step. It used to be a small
+        // link identical to the other two, one tap from wiping everything, and it
+        // did not work anyway. Individual delete buttons above are deliberately
+        // left exactly as they are — the owner confirmed they work well and the
+        // tiny page refresh keeps the phone view from jumping.
+        h += F("<p style='margin:18px 0'>"
+               "<a href='/clearall?_t=");
         h += _csrfToken;
-        h += F("'>&#9888; Delete all logs</a>"
-               " &nbsp; <a class='btn' href='/rawdump'>&#128270; Raw frame dump</a>"
+        h += F("' onclick=\"return confirm('Delete ALL log files?\\n\\n"
+               "The log currently being written is kept.\\nThis cannot be undone.')\" "
+               "style='display:block;padding:16px;background:#b3261e;color:#fff;"
+               "border-radius:8px;text-decoration:none;font-size:1.15em;"
+               "font-weight:bold;text-align:center'>"
+               "&#128465; Delete all logs</a></p>"
+               "<p><a class='btn' href='/rawdump'>&#128270; Raw frame dump</a>"
                " &nbsp; <a class='btn' href='/packs'>&#128230; Pack registry</a></p>");
 
         // Filesystem usage
@@ -184,7 +211,7 @@ static void handleRoot() {
     h += F("<p class='dim'>BTN2/BTN3=screens &nbsp; BTN1=WiFi toggle &nbsp;"
            "Hold BTN3 on screen&nbsp;0 to assign pack labels<br>"
            "Design ref: 460.8 Wh (NCR18650BD 10S4P) &nbsp;"
-           "Delta thresholds: warn=50mV poor=100mV</p>"
+           "Cell&Delta; judged AT REST only &mdash; warn=100mV poor=180mV</p>"
            "</body></html>");
 
     _srv.send(200, "text/html", h);
@@ -244,23 +271,57 @@ static void handleClearAll() {
         _srv.send(403, "text/plain", "Forbidden");
         return;
     }
+    // 2026-07-26 - REWRITTEN. This button silently did nothing.
+    //
+    // WHAT WAS WRONG: the old loop called LittleFS.remove() *while walking the
+    // directory* with openNextFile(). Removing an entry invalidates the open
+    // directory handle, so the walk ended right after the first delete and the
+    // rest of the files were never touched. Single-file delete was unaffected
+    // because it never iterates — which is why that one always worked.
+    //
+    // THE FIX: two passes. Collect every name first, close the directory, then
+    // delete. The active log is skipped (owner request) so an in-progress session
+    // is never destroyed by a tidy-up.
+    uint16_t removed = 0, skipped = 0;
     if (fsReady) {
+        const char *activeFile = loggerActiveFile();   // "/Okai_RIDE_….csv" or ""
+
+        // Pass 1 — collect. Nothing is modified while the directory is open.
+        static const uint8_t kMaxDel = 64;
+        String names[kMaxDel];
+        uint8_t n = 0;
         File root = LittleFS.open("/");
         File f    = root.openNextFile();
-        while (f) {
-            if (isCsvFile(f.name())) {
-                String p = String("/") + f.name();
-                LittleFS.remove(p);
-            }
+        while (f && n < kMaxDel) {
+            if (isCsvFile(f.name())) names[n++] = String("/") + f.name();
             File next = root.openNextFile();
             f.close();
             f = next;
         }
+        if (f) f.close();
         root.close();
-        Serial.println("[WiFi] all logs cleared");
+
+        // Pass 2 — delete, directory handle now closed.
+        for (uint8_t i = 0; i < n; i++) {
+            if (activeFile[0] && names[i] == activeFile) { skipped++; continue; }
+            if (LittleFS.remove(names[i])) removed++;
+        }
+        Serial.printf("[WiFi] cleared %u logs (%u active kept)\n", removed, skipped);
     }
-    _srv.sendHeader("Location", "/");
-    _srv.send(302, "text/plain", "Cleared");
+
+    // Report the count instead of a silent redirect — a silent 302 is precisely
+    // why a broken delete looked like a dead button for so long.
+    char body[320];
+    snprintf(body, sizeof(body),
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta http-equiv='refresh' content='2;url=/'>"
+        "<style>body{background:#0d1117;color:#e0e0e0;font-family:sans-serif;"
+        "padding:24px;text-align:center}b{color:#4af;font-size:1.4em}</style>"
+        "</head><body><p><b>%u</b> log%s deleted.</p>%s"
+        "<p><a style='color:#4af' href='/'>Back</a></p></body></html>",
+        (unsigned)removed, removed == 1 ? "" : "s",
+        skipped ? "<p>Active log kept — it is still being written.</p>" : "");
+    _srv.send(200, "text/html", body);
 }
 
 // ── Route: /rawdump — hex dump of all pack frames (bench test / UID hunt) ─────

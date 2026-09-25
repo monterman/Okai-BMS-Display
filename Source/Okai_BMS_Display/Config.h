@@ -42,7 +42,11 @@
 // Falls back to R_SXXX_S.csv / C_SXXX_S.csv when RTC has no time set
 #define LOG_RIDE_INTERVAL_MS    5000UL    // 5 s while riding
 #define LOG_CHARGE_INTERVAL_MS  30000UL   // 30 s while charging
-#define LOG_RIDE_THRESHOLD_A    1.0f      // A discharge → "riding"
+// 2026-07-26 - RAISED 1.0 -> 2.0 A. A pack sitting on the cheap scooter charger
+// in its balancing phase was observed drawing ~1 A, landing exactly on the old
+// threshold and able to open a spurious RIDE log. Real rides pull 10-25 A per
+// pack, so 2 A keeps a wide margin on both sides.
+#define LOG_RIDE_THRESHOLD_A    2.0f      // A discharge → "riding"
 #define LOG_RIDE_HYSTERESIS_MS  120000UL  // keep RIDE open 2 min after current drops
 #define LOG_MAX_FILE_BYTES      262144UL  // 256 KB per segment → roll to _2, _3…
 
@@ -51,8 +55,27 @@
 #define NUM_LABELS 8
 
 // ─── Cell health thresholds ──────────────────────────────────────────────────
-#define CELL_DELTA_WARN_V  0.050f   // 50 mV
-#define CELL_DELTA_POOR_V  0.100f   // 100 mV
+// 2026-07-26 - RAISED, and now only ever applied to a pack AT REST.
+//
+// WHAT WAS WRONG: the old 50/100 mV limits were evaluated on every sample,
+// including under load. Cell spread inflates 2-5x while current flows (internal
+// resistance differences) and again near full charge (the voltage curve steepens),
+// so the numbers being judged were not health numbers at all.
+//   Measured proof, pack #3 - the healthiest pack in the fleet:
+//     -9.70 A -> 160 mV -> flagged DELTA_POOR
+//     -0.07 A ->  45 mV -> fine, 30 seconds later
+// Raising the limit alone would NOT have fixed that; 160 mV still trips. The
+// gate on current is the actual fix. See CELL_REST_CURRENT_A below.
+//
+// Values: healthy Li-ion rests at 10-30 mV, normal service life reaches ~50 mV,
+// commercial BMS alarm points sit at 100-200 mV, and a genuinely bad cell shows
+// >200 mV AT REST or a spread that grows every cycle. Owner-approved 2026-07-26.
+#define CELL_DELTA_WARN_V  0.100f   // 100 mV — was 50 mV
+#define CELL_DELTA_POOR_V  0.180f   // 180 mV — was 100 mV
+
+// Pack counts as "at rest" below this current. Health is judged ONLY on rest
+// samples; under load the last rest verdict is held instead of recomputed.
+#define CELL_REST_CURRENT_A 1.0f
 
 // ─── Pack registry ───────────────────────────────────────────────────────────
 #define PACK_HISTORY_LEN    10   // rolling spread/SoH entries stored per pack
@@ -149,12 +172,23 @@ struct PackData {
     uint16_t cycles;
     uint8_t  rawStatus;
     bool     chargerDetected;
-    bool     isCharging;
-    bool     chargeDone;
+    bool     isCharging;      // bulk-charge phase active (status bit 5)
+    bool     chargeDone;      // charger on, bulk finished, current has stopped
+    // 2026-07-26 - the state between the two: bulk is over but the BMS is still
+    // trickling current to let the passive balancer bleed the high cells. Used to
+    // be lumped in with "Charging..." which read as wrong at 40 mA.
+    bool     isBalancing;
     float    whIn;           // session Wh accumulated (charging)
     float    whOut;          // session Wh accumulated (discharging)
     bool     valid;
     uint32_t lastUpdateMs;
+    // 2026-07-26 - Rest-gated cell health. Spread is only a health signal when no
+    // current is moving; under load it measures internal resistance instead. The
+    // last rest reading is held and reused so the verdict stays stable mid-ride
+    // rather than flickering POOR on every throttle punch.
+    bool     atRest;         // |current| < CELL_REST_CURRENT_A this sample
+    bool     haveRestDelta;  // a rest sample has been seen since this pack appeared
+    float    restDelta;      // cellHigh - cellLow, last measured AT REST (volts)
 };
 
 // ─── Per-pack registry record ─────────────────────────────────────────────────
@@ -173,6 +207,58 @@ struct PackRecord {
     char     cycID[10];                        // "CYC-XXXX\0"
 };
 
+// ─── Charge-state threshold ───────────────────────────────────────────────────
+// 2026-07-26 - Current at or above this counts as "still flowing", which is what
+// separates Balancing from Charge complete.
+//
+// RAISED 0.010 -> 0.150 A. The 10 mA figure was wrong: it assumed the current
+// reading is trustworthy near zero. It is not. With the charge FET confirmed OFF
+// (status 0x02) and packs genuinely at rest, the RIDE logs of 2026-07-25 show
+//   pack #5  +0.19 A      pack #4  -0.25 A      pack #3  -0.07 A
+// i.e. a sensor offset band of roughly +/-0.2 A. A 10 mA test sits deep inside
+// that band, so "still flowing" would read true forever and Charge complete
+// could never appear. 150 mA clears the offset while staying well under the
+// ~1 A the cheap charger pushes during its balancing phase.
+static const float kBalanceCurrentA = 0.150f;
+
+// ─── Cell health verdict (single source of truth) ─────────────────────────────
+// 2026-07-26 - Every consumer (screen, LEDs, web dashboard, CSV) must ask these
+// two helpers rather than comparing a live delta against the thresholds itself.
+// That is what guarantees the rest-gating actually holds everywhere.
+
+// The delta to JUDGE: the last rest reading if we have one, else the live value.
+// Before any rest sample exists the live value is all there is, but a pack sitting
+// on the bench reaches rest within a second or two, so this is a brief window.
+static inline float healthDelta(const PackData &p) {
+    return p.haveRestDelta ? p.restDelta : (p.cellHigh - p.cellLow);
+}
+
+// "GOOD" | "WARN" | "POOR"
+static inline const char *healthTag(const PackData &p) {
+    const float d = healthDelta(p);
+    if (d >= CELL_DELTA_POOR_V) return "POOR";
+    if (d >= CELL_DELTA_WARN_V) return "WARN";
+    return "GOOD";
+}
+
+// ─── Current formatting (shared by the display and the web dashboard) ─────────
+// 2026-07-26 - WHY THIS EXISTS: while balancing, the pack draws tens of milliamps.
+// "%+.1fA" renders 0.041 A as "+0.0A", which reads as "nothing is happening" when
+// something very much is. Printing "<0.0A" instead says honestly: there IS current,
+// it is just below what this many decimals can show. No extra precision needed —
+// for balancing the owner only needs to know it is flowing, not the exact figure.
+// Kept here, in the header both files include, so the two surfaces cannot drift.
+static inline void fmtAmps(char *buf, size_t n, float amps, uint8_t decimals, const char *suffix)
+{
+    // Smallest magnitude this many decimals can render as non-zero (0.05 at 1 dp).
+    const float floorMag = 0.5f / powf(10.0f, (float)decimals);
+    if (amps != 0.0f && fabsf(amps) < floorMag) {
+        snprintf(buf, n, "<%.*f%s", (int)decimals, 0.0f, suffix);   // "<0.0A"
+    } else {
+        snprintf(buf, n, "%+.*f%s", (int)decimals, amps, suffix);   // "+1.5A"
+    }
+}
+
 // ─── Cross-file globals ───────────────────────────────────────────────────────
 extern PackData   packs[NUM_PACKS];    // UART.ino
 extern float      g_ridePowerEma_W;    // UART.ino — EMA fleet discharge power
@@ -187,7 +273,9 @@ uint8_t  labelGet(uint8_t port);
 void     labelSet(uint8_t port, uint8_t label);
 void     labelStr(uint8_t port, char *buf, size_t len);
 bool     timeIsSynced();
+bool     timeIsRestored();   // epoch came from flash, not a live browser sync
 time_t   timeNowSec();
+const char *loggerActiveFile();   // Logger.ino — file currently being written
 void     timeSyncSet(int64_t browserEpochMs);
 LogMode  logCurrentMode();           // Logger.ino — prototype for Display.ino
 

@@ -102,11 +102,14 @@ static inline bool altPhaseA() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// 2026-07-26 - Judged on the rest-gated delta (Config.h healthDelta), never on
+// the live one. Cell spread inflates under load from internal-resistance
+// differences alone, which used to turn the screen amber on every throttle punch.
 static uint16_t healthColor(uint8_t i) {
     if (!packs[i].valid) return C_NODATA;
-    float d = packs[i].cellHigh - packs[i].cellLow;
-    if (d >= CELL_DELTA_POOR_V) return C_POOR;
-    if (d >= CELL_DELTA_WARN_V) return C_WARN;
+    const char *t = healthTag(packs[i]);
+    if (strcmp(t, "POOR") == 0) return C_POOR;
+    if (strcmp(t, "WARN") == 0) return C_WARN;
     return C_GOOD;
 }
 
@@ -378,9 +381,7 @@ static void drawCellTags(int x, int y, int w, uint8_t p, uint8_t tagSize, bool s
     _gfx->setCursor(x + 4, y + 4);
     snprintf(b, sizeof(b), "P%u", p + 1); _gfx->print(b);       // REAL port number
     if (showHealth) {
-        float d = packs[p].cellHigh - packs[p].cellLow;
-        const char *ht = (d >= CELL_DELTA_POOR_V) ? "POOR" :
-                         (d >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+        const char *ht = healthTag(packs[p]);   // rest-gated (Config.h)
         _gfx->setTextColor(healthColor(p));
         _gfx->setCursor(x + w - 4 - 4 * 6 * tagSize, y + 4);    // 4 chars, 6px/char/size
         _gfx->print(ht);
@@ -403,7 +404,7 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         _gfx->setTextSize(3); _gfx->setTextColor(C_ACCENT);
         snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 174, y + 28); _gfx->print(b);
         _gfx->setTextColor(C_TEXT);
-        snprintf(b, sizeof(b), "%+.1fA", packs[p].current); _gfx->setCursor(x + 174, y + 56); _gfx->print(b);
+        fmtAmps(b, sizeof(b), packs[p].current, 1, "A");   // "<0.0A" when a balancing trickle rounds away _gfx->setCursor(x + 174, y + 56); _gfx->print(b);
         drawSocBarH(x + 10, y + 80, w - 20, 24, soc, hc);
         _gfx->setTextSize(2); _gfx->setTextColor(C_DIM);
         snprintf(b, sizeof(b), "%.0fW", packs[p].voltage * packs[p].current); _gfx->setCursor(x + 10,  y + 114); _gfx->print(b);
@@ -417,7 +418,7 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 68); _gfx->print(b);
         drawSocBarH(x + 6, y + 90, w - 12, 20, soc, hc);
         _gfx->setTextColor(C_TEXT);
-        snprintf(b, sizeof(b), "%+.1fA", packs[p].current); _gfx->setCursor(x + 6, y + 116); _gfx->print(b);
+        fmtAmps(b, sizeof(b), packs[p].current, 1, "A");   // "<0.0A" when a balancing trickle rounds away _gfx->setCursor(x + 6, y + 116); _gfx->print(b);
         snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp); _gfx->setCursor(x + w - 56, y + 116); _gfx->print(b);
     } else if (tier == 3) {                            // column: %, voltage, tall bar
         drawCellTags(x, y, w, p, 2, false);
@@ -513,10 +514,9 @@ static void drawScreenDetail() {
     }
 
     // Health tag top-right (size1)
-    float delta = packs[i].valid ? (packs[i].cellHigh - packs[i].cellLow) : 0.0f;
-    const char *htag = !packs[i].valid ? "----" :
-                       (delta >= CELL_DELTA_POOR_V) ? "POOR" :
-                       (delta >= CELL_DELTA_WARN_V) ? "WARN" : "GOOD";
+    // Rest-gated: show and judge the last at-rest spread (Config.h)
+    float delta = packs[i].valid ? healthDelta(packs[i]) : 0.0f;
+    const char *htag = !packs[i].valid ? "----" : healthTag(packs[i]);
     _gfx->setTextColor(hc);
     _gfx->setCursor(280, 22);
     _gfx->print(htag);
@@ -544,8 +544,11 @@ static void drawScreenDetail() {
 
     if (phA) {
         // Alt A (5s) — voltage + current big, power + Wh below
-        char va[20];
-        snprintf(va, sizeof(va), "%.2fV %+.2fA", packs[i].voltage, packs[i].current);
+        // 2026-07-26 - current via fmtAmps() so a balancing trickle reads "<0.00A"
+        // rather than "+0.00A", which looked like nothing was happening at 40 mA.
+        char va[24], amps[12];
+        fmtAmps(amps, sizeof(amps), packs[i].current, 2, "A");
+        snprintf(va, sizeof(va), "%.2fV %s", packs[i].voltage, amps);
         _gfx->setTextColor(C_ACCENT);
         _gfx->setCursor(4, 72);
         _gfx->print(va);
@@ -559,10 +562,21 @@ static void drawScreenDetail() {
         _gfx->setCursor(4, 100);
         _gfx->print(pw);
 
+        // 2026-07-26 - three states instead of two. "Balancing" is the phase after
+        // bulk where the BMS still trickles current so the passive balancer can bleed
+        // the high cells; it used to be labelled "Charging..." which read as wrong
+        // next to a near-zero current, and at 99% SOC it never reached "Charge done".
         if (packs[i].chargerDetected) {
+            // 2026-07-26 - owner-chosen wording. "Bulk charging" names the actual
+            // BMS phase and, more usefully, marks the point to unplug when in a
+            // hurry: bulk carries ~90% of the capacity, the balancing taper that
+            // follows adds the last few percent and takes as long or longer.
+            const char *st = packs[i].isBalancing ? "Balancing"
+                           : packs[i].chargeDone  ? "Charge complete"
+                                                  : "Bulk charging";
             _gfx->setTextColor(packs[i].chargeDone ? C_GOOD : C_CHARGE);
             _gfx->setCursor(4, 118);
-            _gfx->print(packs[i].chargeDone ? "Charge done" : "Charging...");
+            _gfx->print(st);
         }
     } else {
         // Alt B (3s) — delta + temp big, CYC + SoH + sessions below
@@ -775,10 +789,11 @@ static void drawScreenHealth() {
         }
 
         uint8_t  soh = sohEstimate(i);
-        uint16_t dmv = (uint16_t)((packs[i].cellHigh - packs[i].cellLow) * 1000.0f + 0.5f);
+        // Rest-gated: the mV shown is the last at-rest spread, so the number and
+        // the tag beside it always agree (Config.h healthDelta/healthTag).
+        uint16_t dmv = (uint16_t)(healthDelta(packs[i]) * 1000.0f + 0.5f);
         float   avWh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-        const char *stag = (dmv >= (uint16_t)(CELL_DELTA_POOR_V * 1000.0f)) ? "POOR" :
-                           (dmv >= (uint16_t)(CELL_DELTA_WARN_V * 1000.0f)) ? "WARN" : "GOOD";
+        const char *stag = healthTag(packs[i]);
         if (soh < lowestSoH) { lowestSoH = soh; worstPack = i; }
 
         _gfx->setTextColor(hc);

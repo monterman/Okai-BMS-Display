@@ -22,8 +22,11 @@
 
 // per-pack state thresholds
 #define LED_TEMP_ALARM_C    55
-#define LED_SPREAD_WARN_MV  50
-#define LED_SPREAD_POOR_MV 100
+// 2026-07-26 - Derived from the single source of truth in Config.h so the LEDs,
+// the screen, the dashboard and the CSV can never disagree about what "WARN"
+// means. Previously hard-coded to the old 50/100 mV pair.
+#define LED_SPREAD_WARN_MV ((uint16_t)(CELL_DELTA_WARN_V * 1000.0f))
+#define LED_SPREAD_POOR_MV ((uint16_t)(CELL_DELTA_POOR_V * 1000.0f))
 #define LED_SOC_LOW_PCT     15
 #define LED_STALE_MS      8000UL      // no fresh packet in 8s -> treat as no-response
 
@@ -141,7 +144,8 @@ static void renderPackLive(const PackData& p, uint32_t t, LedRGB out[], int cnt)
     }
 
     // Imbalance overlay on the inner two px — relative to pack size (out[cnt-2], out[cnt-1])
-    uint16_t spread_mV = (uint16_t)((p.cellHigh - p.cellLow) * 1000.0f + 0.5f);
+    // Rest-gated (Config.h) — a loaded pack's spread is not a health signal.
+    uint16_t spread_mV = (uint16_t)(healthDelta(p) * 1000.0f + 0.5f);
     int hi = cnt-1, lo = (cnt >= 2) ? cnt-2 : 0;
     if(spread_mV >= LED_SPREAD_POOR_MV){ if((t%280) < 140){ out[lo]=OK_VERM;   out[hi]=OK_VERM;   } }
     else if(spread_mV >= LED_SPREAD_WARN_MV){ if((t%1000) < 500){ out[lo]=OK_YELLOW; out[hi]=OK_YELLOW; } }

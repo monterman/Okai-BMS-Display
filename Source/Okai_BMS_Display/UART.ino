@@ -77,10 +77,34 @@ void uartLoop() {
             packs[i].maxSoc          = pack[i].maxSoc();
             packs[i].rawStatus       = pack[i].rawStatus();
             packs[i].chargerDetected = pack[i].isChargerDetected();
-            packs[i].isCharging      = pack[i].isChargingBulk();
-            packs[i].chargeDone      = pack[i].isChargerDetected()
-                                       && !pack[i].isChargingBulk()
-                                       && pack[i].soc() == 100;
+            // 2026-07-26 - THREE charge states, not two.
+            // WHAT WAS WRONG: chargeDone required soc()==100, so a pack that finished
+            // bulk at 99% fell through to the "Charging..." label while trickling 40 mA
+            // for the balancer. The screen said Charging with +0.0A next to it — which
+            // reads as broken. The BMS was right; the label was not.
+            //   Charging   = bulk phase active (status bit 5)
+            //   Balancing  = bulk over, charger still on, current STILL FLOWING
+            //   Complete   = bulk over, charger still on, current stopped
+            // SOC is deliberately no longer part of this: what matters is whether
+            // charge is still moving, not whether the gauge reached a round number.
+            const bool bulk      = pack[i].isChargingBulk();
+            const bool chgOn     = pack[i].isChargerDetected();
+            const bool flowing   = fabsf(pack[i].current()) >= kBalanceCurrentA;
+
+            packs[i].isCharging  = bulk;
+            packs[i].isBalancing = chgOn && !bulk && flowing;
+            packs[i].chargeDone  = chgOn && !bulk && !flowing;
+
+            // 2026-07-26 - Latch the cell spread only while the pack is at rest.
+            // Under load the spread measures internal-resistance differences, not
+            // state of health, so judging it there flags good packs as bad. Holding
+            // the last rest value keeps the verdict stable through a whole ride.
+            packs[i].atRest = fabsf(pack[i].current()) < CELL_REST_CURRENT_A;
+            if (packs[i].atRest) {
+                packs[i].restDelta     = pack[i].high() - pack[i].low();
+                packs[i].haveRestDelta = true;
+            }
+
             packs[i].valid           = true;
             packs[i].lastUpdateMs    = now;
         }
@@ -88,6 +112,9 @@ void uartLoop() {
         // Mark stale if no successful read for > 10 s
         if (packs[i].valid && (now - packs[i].lastUpdateMs) > 10000UL) {
             packs[i].valid = false;
+            // Drop the held rest reading too — the next pack on this port is very
+            // likely a different one, and it must not inherit this pack's verdict.
+            packs[i].haveRestDelta = false;
         }
 
         // Rising edge: pack just appeared → identify against registry
