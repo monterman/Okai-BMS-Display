@@ -14,3 +14,6 @@ docs/Waterproof_Connector_Wiring.md
 
 # Raw device logs — pulled from the board, not source
 logs/
+
+# Saved firmware binaries: keep the scripts and notes, not the images
+firmware/**/*.bin
