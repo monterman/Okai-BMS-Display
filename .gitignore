@@ -11,3 +11,6 @@ docs/Build.md
 
 # Local wiring reference — hardware build notes, not source
 docs/Waterproof_Connector_Wiring.md
+
+# Raw device logs — pulled from the board, not source
+logs/
