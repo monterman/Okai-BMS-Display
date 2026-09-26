@@ -17,3 +17,4 @@ logs/
 
 # Saved firmware binaries: keep the scripts and notes, not the images
 firmware/**/*.bin
+firmware/*/flash_args
