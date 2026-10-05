@@ -1,0 +1,88 @@
+# /packs registry dump — read-only esptool read-flash of ffat (0x610000, 0x9E0000) after the 6d9bb7d first boot, 2026-10-05 13:49
+# Decoded with littlefs-python extract --block-size 4096. labels.bin=00000000  labelseed.bin=01  sessions.bin=65003300 (rides 101, charges 51)
+
+## CYC-0020.dat
+regCYC=20
+maxSocAtReg=100
+firstSeen=2026-09-25
+currentCycles=55
+sessions=17
+totalWhCharged=16.16
+totalWhDischarged=400.95
+historyLen=10
+spreadHistory=159,159,120,65,78,67,62,66,61,53
+sohHistory=100,100,100,100,100,100,100,100,100,100
+
+## CYC-0037.dat
+regCYC=37
+maxSocAtReg=100
+firstSeen=2026-05-27
+currentCycles=79
+sessions=51
+totalWhCharged=31.81
+totalWhDischarged=423.05
+historyLen=10
+spreadHistory=30,34,36,42,9,10,13,67,67,68
+sohHistory=100,100,100,100,100,100,100,100,100,100
+
+## CYC-0044.dat
+regCYC=44
+maxSocAtReg=99
+firstSeen=2026-09-28
+currentCycles=55
+sessions=2
+totalWhCharged=0.71
+totalWhDischarged=115.45
+historyLen=2
+spreadHistory=78,68
+sohHistory=99,99
+
+## CYC-0045.dat
+regCYC=45
+maxSocAtReg=99
+autoNum=1
+label=4
+firstSeen=2026-10-05
+currentCycles=45
+sessions=0
+totalWhCharged=0.00
+totalWhDischarged=0.00
+historyLen=0
+spreadHistory=
+sohHistory=
+
+## CYC-0054.dat
+regCYC=54
+maxSocAtReg=99
+firstSeen=2026-05-27
+currentCycles=55
+sessions=58
+totalWhCharged=76.16
+totalWhDischarged=637.62
+historyLen=10
+spreadHistory=32,37,153,154,183,86,82,86,74,78
+sohHistory=99,99,99,99,99,99,99,99,99,99
+
+## CYC-0055.dat
+regCYC=55
+maxSocAtReg=0
+firstSeen=2026-09-28
+currentCycles=55
+sessions=0
+totalWhCharged=0.00
+totalWhDischarged=0.00
+historyLen=0
+spreadHistory=
+sohHistory=
+
+## CYC-0079.dat
+regCYC=79
+maxSocAtReg=0
+firstSeen=2026-07-26
+currentCycles=79
+sessions=0
+totalWhCharged=0.00
+totalWhDischarged=0.00
+historyLen=0
+spreadHistory=
+sohHistory=
