@@ -399,6 +399,11 @@ static float packChargeMins(uint8_t p) {
 
     float curMins = -1.0f;
     float amps = packs[p].current;                      // + = into the pack
+    // The BMS emits 0x2020 / 8.224 A as an idle placeholder (OkaiBMS.h:43), which
+    // runtimeSample() already filters. Unfiltered here it sails past the 0.2 A gate and,
+    // during the 5 min slope warm-up, produces a confident ~47 min estimate for a charge
+    // that actually takes ~4.5 h — and then poisons the 50/50 blend afterwards.
+    if (fabsf(amps - 8.224f) < 0.05f) amps = 0.0f;
     if (amps > 0.2f && packs[p].capacityMah > 0)
         curMins = ((100.0f - socNow) / 100.0f * (float)packs[p].capacityMah)
                   / (amps * 1000.0f) * 60.0f;
@@ -413,7 +418,7 @@ static float packChargeMins(uint8_t p) {
 // Balancing is reported by name rather than as a time: SOC barely moves during the
 // constant-voltage tail, so any extrapolation there reads as near-infinite.
 static void chargeTimeStr(uint8_t p, char* out, size_t len) {
-    if (packs[p].chargeDone)  { snprintf(out, len, "FULL"); return; }
+    if (packs[p].chargeDone || packs[p].soc >= 100) { snprintf(out, len, "FULL"); return; }
     if (packs[p].isBalancing) { snprintf(out, len, "BAL");  return; }
     float m = packChargeMins(p);
     if (m < 0)   { snprintf(out, len, "--");  return; }   // warming up
@@ -433,7 +438,10 @@ static void runtimeString(char* out, size_t len) {
         float slowest = -1.0f; bool anyWorking = false;
         for (uint8_t k = 0; k < cn; k++) {
             uint8_t p = cl[k];
-            if (packs[p].chargeDone) continue;          // this one is done
+            // A pack at 100 % that has not yet asserted chargeDone used to count as
+            // "working" and contribute packChargeMins()==0, so one finished pack made the
+            // band read "FULL IN 0 min" while another sat at 30 % with hours to go.
+            if (packs[p].chargeDone || packs[p].soc >= 100) continue;
             anyWorking = true;
             float m = packChargeMins(p);
             if (m >= 0 && m > slowest) slowest = m;
@@ -536,7 +544,8 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         drawSocBarH(x + 6, y + 90, w - 12, 20, soc, hc);
         _gfx->setTextColor(C_TEXT);
         // Same swallowed-by-comment bug as tier 1 — fixed 2026-10.
-        if (chgMode) { _gfx->setTextColor(C_GOOD); _gfx->setCursor(x + 6, y + 116); _gfx->print(ct); }
+        if (chgMode) { _gfx->setTextColor(C_GOOD); _gfx->setCursor(x + 6, y + 116); _gfx->print(ct);
+                       _gfx->setTextColor(C_TEXT); }   // restore, or the temp below inherits green
         else { fmtAmps(b, sizeof(b), packs[p].current, 1, "A");
                _gfx->setCursor(x + 6, y + 116); _gfx->print(b); }
         snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp); _gfx->setCursor(x + w - 56, y + 116); _gfx->print(b);
@@ -1035,8 +1044,12 @@ void displayInit() {
 // Home (screen 0, the adaptive pack gauges) is THE display. Everything else is a
 // detour the device must undo by itself.
 //
-// This runs unconditionally at the top of displayLoop(), ABOVE every early return.
-// That placement is the whole point: the previous code put the idle auto-return
+// This runs before every early return that can persist — i.e. above the overlay returns,
+// which is the placement that matters. It sits BELOW two short-lived guards it must not
+// fight: gSleepCountdownActive (PowerManager owns the display while BTN1 is held, <=4 s
+// and self-clearing) and !gDisplayOk (framebuffer alloc failed, nothing is drawn at all).
+// Neither can strand the display, so neither needs the policy. The previous code put the
+// idle auto-return
 // below the overlay early-returns, so an overlay suppressed the very mechanism meant
 // to dismiss it — and the auto-return was additionally gated on !charging, so while
 // a charger was connected the display never came home at all. Between them, the
@@ -1083,10 +1096,19 @@ void displayLoop() {
     // Any press counts as activity. This MUST stay above the overlay early-return —
     // it used to sit below it, so a press the overlay consumed never reset the idle
     // timer and the overlay effectively froze the home countdown.
-    if (b1 == LOW || b2 == LOW || b3 == LOW) {
+    // EDGE, not level. Testing the level re-armed both timers on every loop pass for as
+    // long as any button was down — so a button held, jammed, or SHORTED BY WATER (the
+    // actual threat model: a sealed box on open water) pinned _lastInputMs to now and
+    // defeated both invariants permanently. A stuck button could park the display off
+    // Home, or leave the label picker covering it with no 15 s escape — precisely the
+    // failure the disconnect modal was deleted for.
+    static bool _anyPrev = false;
+    const bool anyDown = (b1 == LOW || b2 == LOW || b3 == LOW);
+    if (anyDown && !_anyPrev) {                      // press edge only
         _lastInputMs = now;
         if (_showLabelPick) _overlayShownMs = now;   // an edit in progress never times out
     }
+    _anyPrev = anyDown;
 
     // Unconditional. Above every early return. See the note on enforceHomePolicy().
     enforceHomePolicy(now);
@@ -1096,8 +1118,15 @@ void displayLoop() {
     // count). Guessing would file a weak pack's decline against a healthy one, so ask
     // instead — once per insertion. The 15 s timeout still applies, and declining just
     // leaves the pack showing its port tag with no history attributed.
+    // Re-arm on packs[i].valid, NOT packConnected(i). packConnected goes false after 5 s
+    // of silence but .valid survives to 10 s (UART.ino), and packRegistryIdentify only
+    // re-runs on the .valid rising edge — so re-arming on packConnected reopened the
+    // picker on any 5-10 s frame glitch while .ambiguous was still set from the original
+    // identify. On a marginal connector that is a near-continuous train of 15 s overlays
+    // covering Home and eating every button: a self-raising overlay, which is exactly
+    // what the disconnect modal was deleted for being.
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        if (!packConnected(i)) { _ambiguousAsked[i] = false; continue; }   // re-arm on re-seat
+        if (!packs[i].valid) { _ambiguousAsked[i] = false; continue; }   // re-arm only on a real re-seat
         if (packRec[i].ambiguous && !_ambiguousAsked[i] && !_showLabelPick) {
             _ambiguousAsked[i] = true;
             openLabelPicker(i, now);
@@ -1195,7 +1224,11 @@ void displayLoop() {
     // navigate away; when charging stops it returns Home if still on the charging screen.
     bool charging = (logCurrentMode() == LOG_CHARGE);
     static bool _wasCharging = false;
-    if (charging && !_wasCharging)              { _screen = 2; _dispLast = 0; }   // charging started
+    // Seeding _lastInputMs is what makes the jump survive. Without it the idle timer is
+    // almost always already expired (the device sits on Home untouched), so
+    // enforceHomePolicy snapped straight back on the very next iteration and the
+    // charging screen appeared for well under one frame — a flash, not a screen.
+    if (charging && !_wasCharging)              { _screen = 2; _dispLast = 0; _lastInputMs = now; }
     else if (!charging && _wasCharging && _screen == 2) { _screen = 0; _dispLast = 0; } // charging ended
     _wasCharging = charging;
     // The idle auto-return used to live here, gated on !charging. Both the position

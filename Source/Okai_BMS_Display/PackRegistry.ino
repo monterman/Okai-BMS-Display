@@ -181,10 +181,12 @@ static uint8_t _nextFreeAutoNum() {
     if (dir && dir.isDirectory()) {
         File f = dir.openNextFile();
         while (f) {
-            const char* name = f.name();
+            // Build the path BEFORE close(). File::close() releases the FileImpl whose
+            // destructor frees the strdup'd string that name() returned, so using the
+            // pointer afterwards is a use-after-free.
+            char path[40];
+            snprintf(path, sizeof(path), "/packs/%s", f.name());
             f.close();
-            char path[32];
-            snprintf(path, sizeof(path), "/packs/%s", name);
             File rf = LittleFS.open(path, "r");
             if (rf) {
                 size_t sz = (size_t)rf.size();
@@ -245,7 +247,27 @@ static bool _adoptByNumber(uint8_t port, uint8_t n) {
     if (dir) dir.close();
     if (!foundPath[0]) return false;
 
-    _loadRecord(port, foundPath);
+    // Refuse if another port already holds this record. Two ports carrying the same
+    // regCYC both write the SAME file at session close, so one port's entire session
+    // energy and its sessions++ are silently lost to last-writer-wins, and historyLen
+    // diverges between the two copies.
+    for (uint8_t q = 0; q < NUM_PACKS; q++) {
+        if (q == port || !packRec[q].known) continue;
+        char other[40]; _cycFilename(other, sizeof(other), packRec[q].regCYC);
+        if (strcmp(other, foundPath) == 0) {
+            Serial.printf("[REG] port%u cannot adopt #%u - already held by port%u\n",
+                          port + 1, (unsigned)n, q + 1);
+            return false;
+        }
+    }
+
+    // _loadRecord returns false WITHOUT memsetting on open failure / bad size, which
+    // would leave the record untouched while we reported success — the owner answers the
+    // prompt, the log says "resolved", and nothing is stored.
+    if (!_loadRecord(port, foundPath)) {
+        Serial.printf("[REG] port%u adopt FAILED to load %s\n", port + 1, foundPath);
+        return false;
+    }
     packRec[port].currentCycles = packs[port].cycles;   // re-anchor so the next match is tight
     packRec[port].ambiguous     = false;
     _saveRecord(port);
@@ -263,6 +285,14 @@ void packRegistrySetLabel(uint8_t port, uint8_t label) {
     // that record so its wear history continues on the right battery — the whole
     // reason for asking rather than guessing.
     if (!packRec[port].known && packRec[port].ambiguous) {
+        // "--" (0) means SKIP, not "new pack". Registering here would create a third
+        // record for a battery we already know is one of two existing ones — the exact
+        // mis-filing the ambiguity prompt exists to prevent — and it was the one-press
+        // default, because the picker pre-fills at 0 when nothing is known.
+        if (!label) {
+            Serial.printf("[REG] port%u ambiguity left unresolved by owner\n", port + 1);
+            return;
+        }
         if (_adoptByNumber(port, label)) return;
         packRegistryRegister(port);            // no pack carries that number — it is new
         packRec[port].label = label;
@@ -328,7 +358,7 @@ void packRegistryIdentify(uint8_t port) {
                 char* buf = (sz > 0 && sz < 512) ? (char*)malloc(sz + 1) : nullptr;
                 if (buf) {
                     rf.read((uint8_t*)buf, sz);
-                    buf[sz] = ' ';
+                    buf[sz] = '\0';
                     uint16_t rReg = 0, rCur = 0; uint8_t rMax = 0;
                     _rdU16(buf, "regCYC",        &rReg);
                     _rdU16(buf, "currentCycles", &rCur);
@@ -363,7 +393,7 @@ void packRegistryIdentify(uint8_t port) {
     }
     if (dir) dir.close();
 
-    if (bestPath[0] == ' ') {          // nothing close enough - a pack we have not met
+    if (bestPath[0] == '\0') {          // nothing close enough - a pack we have not met
         packRegistryRegister(port);
         return;
     }

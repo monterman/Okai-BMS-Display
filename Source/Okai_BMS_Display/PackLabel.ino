@@ -207,6 +207,11 @@ void labelSet(uint8_t port, uint8_t label) {
     if (port >= NUM_PACKS || label > NUM_LABELS) return;
     packRegistrySetLabel(port, label);         // no-op if the pack is unidentified
     _labels[port] = label;                     // keep the legacy fallback coherent
+    // saveLabels() must still run. For an UNIDENTIFIED pack — the exact fallback case
+    // this legacy map exists for — packRegistrySetLabel stores nothing, so without this
+    // the owner's choice lived only in RAM and vanished on the next reboot, while
+    // /labels.bin kept serving whatever stale port-bound number was already in flash.
+    saveLabels();
 }
 
 // "3" if assigned, "P1" if not
