@@ -1,0 +1,15 @@
+# CYC-0020.dat after pack #7 was connected to port 4 (uptime 465-520 s), read 2026-10-05 14:00.
+# The previous CYC-0020.dat (reg 2026-09-25, 17 sessions, hist 10) was OVERWRITTEN by this new registration; prior contents in 2026-10-05-packs-registry-dump.txt.
+
+regCYC=20
+maxSocAtReg=100
+autoNum=1
+label=0
+firstSeen=2026-10-05
+currentCycles=20
+sessions=0
+totalWhCharged=0.00
+totalWhDischarged=0.00
+historyLen=0
+spreadHistory=
+sohHistory=
