@@ -76,9 +76,13 @@ since July. The locked *identity* (#1 is the pack that read CYC-37 in July) stan
   as designed — the old first-match code would have filed one pack's history under the other silently.
 - **#4 registering NEW** means either #4 never had a record, or its record sits more than 8 cycles
   from 45. If the latter, #4 now has a split history. Check `/packs` on the dashboard.
-- **#6 (port 3) did not charge** — 62 % flat for the whole session, status byte `0x02` vs `0x2F` on
-  the others, and frames go QUIET for ~1.5 s ten times in 240 s while ports 1–2 never do.
-  Candidate for the known bad-BMS pack, or a port-3 charging fault.
+- ~~#6 (port 3) did not charge — candidate bad BMS~~ **RETRACTED 2026-10-05: no fault.** The owner
+  has only **two chargers**; port 3 had none attached. 0.000 A and a flat 62 % are expected. Status
+  `0x02` (bit 1 discharge-FET only) vs `0x2F` (bits 0,1,2,3,5) differs exactly by charge-FET,
+  charger-detected, charger-OK and bulk (`OkaiBMS.h:25-30`) — `0x02` is a normal idle pack.
+  Still open but **confounded**: port 3 went QUIET (~1.5 s) 10× in 240 s while ports 1–2 never did —
+  marginal BMS, or an uncharged pack sleeping more readily. Re-compare only with all ports charging.
+  **Do not read a zero-current pack as a fault in single/dual-charger sessions.**
 
 Full capture: `docs/bench-logs/2026-10-05-first-boot-6d9bb7d.log`.
 
