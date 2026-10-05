@@ -1,5 +1,23 @@
 # Display Screens — Okai BMS Display
 
+> ### ⚠️ THIS DOCUMENT IS STALE — read this box first (2026-10)
+> It still describes a **fixed 2×2 fleet grid with empty-cell summary panels**, bottom page dots
+> and a header uptime clock. All three were retired. The code now draws a **contiguous adaptive
+> home**: connected packs pack left-to-right at a density tier of 1/2/3/4, nav dots live in the
+> header, and the cell-spread thresholds are 100/180 mV at rest, not 50/100.
+>
+> **The home rule, which this document never mentioned:**
+> - Screen 0 (the adaptive gauges) is the default and **nothing may hold the display off it for
+>   longer than `HOME_IDLE_MS` = 30 s**, charging included. Enforced by `enforceHomePolicy()` at
+>   the top of `displayLoop()`, above every early return.
+> - **No overlay survives `OVERLAY_TIMEOUT_MS` = 15 s** without input.
+> - The **pack-disconnect modal no longer exists**. A missing pack simply vanishes from the
+>   gauges; the dropout is still recorded in the CSV by `writePackEdges()`.
+> - While charging each cell shows **time to full** in place of its least useful readout, and the
+>   bottom band reports when the **last** pack finishes.
+>
+> Rewrite this file against `Display.ino` before trusting any layout detail below.
+
 Hardware: LILYGO T-Display-S3 · 320×170 px ST7789 TFT · landscape orientation  
 Navigation: **BTN2** = next screen →  **BTN3** = prev screen ←  **BTN1** = action (screen-dependent)  
 Header bar (always visible): firmware version · WiFi + log mode · uptime clock

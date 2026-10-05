@@ -24,7 +24,7 @@ Real-time telemetry display, CSV logger, and pack health tracker for up to four 
 | # | Name | BTN1 action |
 |---|------|-------------|
 | 0 | **Fleet Overview** — 2×2 grid, all packs at a glance. Empty slots show fleet energy summary. | WiFi toggle |
-| 1 | **Per-Pack Detail** — full telemetry for one pack, CYC fingerprint, SoH, session Wh | Cycle P1→P4 |
+| 1 | **Per-Pack Detail** — full telemetry for one pack, CYC fingerprint, SoH, session Wh | Cycle **connected** packs |
 | 2 | **Ride Energy** (riding) — `~47 min left`, per-pack Wh/mAh, fleet totals + design reference | — |
 | 2 | **Charging Live** (charging) — SOC fill bars, charge ETA per pack, total watts | — |
 | 3 | **Cell Health** — spread mV, cycle count, SoH%, available Wh, worst-pack flag | — |

@@ -75,6 +75,12 @@ void uartLoop() {
             packs[i].maxTemp         = pack[i].maxTemp();
             packs[i].cycles          = pack[i].chargeCycleCount();
             packs[i].maxSoc          = pack[i].maxSoc();
+            packs[i].capacityMah     = pack[i].ratedCapacity_mAh();
+            packs[i].tempAvg         = pack[i].tempCellAvg();
+            packs[i].tempFet         = pack[i].tempFET();
+            packs[i].tempMcu         = pack[i].tempMCU();
+            packs[i].chargerStateRaw = (uint8_t)pack[i].chargerState();
+            packs[i].chargerActive   = pack[i].chargerActive();
             packs[i].rawStatus       = pack[i].rawStatus();
             packs[i].chargerDetected = pack[i].isChargerDetected();
             // 2026-07-26 - THREE charge states, not two.

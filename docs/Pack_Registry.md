@@ -20,6 +20,19 @@ Physical packs identified by charge cycle count (CYC fingerprint). The BMS proto
 ### ⚠️ The CYC fingerprint DRIFTS — match with tolerance, not equality
 Pack #5 read **CYC-78** in May and **CYC-79** on 2026-07-27. **The fingerprint is a cycle counter, so it increments every time the pack is charged.** It is unique within the fleet only because the gaps between packs are large (37 · 54 · 65 · 78 · 8229 · 8246 · 8256).
 
+> ### ⚠️ CORRECTION 2026-10 — "the gaps are large" is wrong, and it was load-bearing
+> Read those numbers again: the gaps are **17, 11, 13, ... 17, 10** cycles. `PACK_CYC_TOLERANCE`
+> was **500** — far wider than the spacing between packs — and `packRegistryIdentify()` accepted
+> the **first** record the directory walk returned inside that window, not the closest. A pack
+> reading 8246 matched the 8229 record just as readily as its own. **Identity was effectively
+> decided by directory order, and lifetime wear history was very likely being filed against the
+> wrong battery** — which matters most for the weak pack being watched.
+>
+> Fixed in the 2026-10 firmware: match on **last-seen** cycles (`currentCycles`, re-anchored on
+> every sighting) rather than registration cycles; take the **nearest** candidate; window cut to
+> `PACK_CYC_MATCH_WINDOW` = **8**; and when two candidates fall within `PACK_CYC_AMBIGUOUS` = 3 of
+> each other the device **refuses to guess** and asks the owner once.
+
 **When decoding a log, match to the NEAREST registry value, never exact** — and expect the number to keep climbing. A pack reading CYC-80 next month is still #5. Re-anchor the registry value on each owner confirmation rather than treating the May snapshot as permanent.
 
 ---

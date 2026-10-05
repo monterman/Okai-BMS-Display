@@ -79,7 +79,21 @@
 
 // ─── Pack registry ───────────────────────────────────────────────────────────
 #define PACK_HISTORY_LEN    10   // rolling spread/SoH entries stored per pack
-#define PACK_CYC_TOLERANCE 500   // max cycle-count drift allowed for re-identification
+// ─── Pack identification ─────────────────────────────────────────────────────
+// The Okai BMS reports NO serial number and NO MAC. Cycle count is the only stable
+// per-pack value, so it is the fingerprint — with the known weakness that two packs
+// at similar cycle counts are hard to tell apart.
+//
+// 2026-10 - RETUNED, and the old value was actively wrong for this fleet. The owner's
+// packs sit at 37 · 54 · 65 · 78 · 8229 · 8246 · 8256 cycles — gaps of 10 to 17. The
+// previous tolerance of 500 was far wider than the spacing between packs, and the scan
+// took the FIRST record inside that window rather than the closest, so a pack reading
+// 8246 could be filed under the 8229 record. Identity was being decided by directory
+// order. Three changes fix it: match on last-seen cycles instead of registration
+// cycles, take the NEAREST candidate, and refuse to guess when two are too close.
+#define PACK_CYC_MATCH_WINDOW 8  // max forward cycle drift that still counts as the same pack
+#define PACK_CYC_AMBIGUOUS    3  // two candidates this close → do not guess, ask instead
+#define PACK_SOC_MATCH_SLACK  3  // maxSoc (SoH) may drift this many % and still match
 
 // ─── Display ─────────────────────────────────────────────────────────────────
 #define TFT_BL_PIN      38
@@ -136,7 +150,12 @@
 extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat, millis()
 
 // ─── Dynamic home screen ─────────────────────────────────────────────────────
-#define HOME_IDLE_MS       180000UL    // 3 min with no button input → auto-return to Home
+// HOME IS THE DEFAULT, ALWAYS. Nothing may hold the display off Home for longer
+// than HOME_IDLE_MS, and no overlay may cover it for longer than OVERLAY_TIMEOUT_MS.
+// Enforced unconditionally by enforceHomePolicy() at the TOP of displayLoop(), above
+// every early return — see Display.ino. Charging is NOT an exemption.
+#define HOME_IDLE_MS       30000UL     // 30 s with no button input → auto-return to Home
+#define OVERLAY_TIMEOUT_MS 15000UL     // 15 s with no button input → any overlay self-dismisses
 #define PACK_CONNECTED_MS  5000UL      // no fresh frame in this long → pack is dead/disconnected
 
 // ─── Runtime ("time remaining") estimator ────────────────────────────────────
@@ -147,6 +166,19 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 #define RUNTIME_WINDOW_MS    150000UL  // 2.5 min trailing window for the decline slope
 #define RUNTIME_MIN_SPAN_MS  45000UL   // need >=45 s of data before showing a number
 #define RUNTIME_RESERVE_PCT  15        // per-pack stop-riding reserve (extrapolate to here)
+
+// ─── Time-to-full estimator (charging) ───────────────────────────────────────
+// Charging is an order of magnitude slower than discharging, so it CANNOT share the
+// discharge ring. The owner's packs take roughly 4.5 h for a full charge — about
+// 0.37 % SOC per minute. The discharge window is 20 samples x 10 s = 200 s, which over
+// that charge sees barely 1 % of movement, and SOC is reported at 1 % resolution. The
+// "slope" would be pure quantisation noise and the estimate would jump between absurd
+// values. Charging gets its own slow ring instead: 16 samples a minute apart = a 16 min
+// window, which sees 5-6 % of real movement and yields a stable number.
+#define CHG_SAMPLE_MS     60000UL      // SOC ring cadence while charging (1 min)
+#define CHG_WINDOW_MS     960000UL     // keep 16 min of history
+#define CHG_MIN_SPAN_MS   300000UL     // need >=5 min of data before quoting a time
+#define CHG_RING_LEN      16
 
 // ─── WiFi AP ─────────────────────────────────────────────────────────────────
 #define WIFI_AP_SSID     "OkaiBMS"
@@ -170,6 +202,20 @@ struct PackData {
     uint8_t  maxSoc;           // max achievable SOC / SoH indicator (b[06])
     uint8_t  maxTemp;
     uint16_t cycles;
+    // Rated pack capacity, frame byte [20] x 200 mAh (0x40 = 12800 mAh). Decoded by
+    // OkaiBMS::ratedCapacity_mAh() since the library was written but never surfaced.
+    // Needed as the cross-check for time-to-full while charging.
+    uint16_t capacityMah;
+    // 2026-10 - Health telemetry the library has always decoded and nothing ever read.
+    // Only tempCellMax() reached PackData; the other three sensors, the charger state
+    // byte and the charger-active flag were all dropped on the floor. TEMP_FET is the
+    // interesting one for pack health — thermal stress on the discharge FET is where a
+    // tiring pack shows itself first. All of these now reach the CSV.
+    uint8_t  tempAvg;          // [b08] average cell temp
+    uint8_t  tempFet;          // [b09] discharge FET temp
+    uint8_t  tempMcu;          // [b10] BMS MCU temp
+    uint8_t  chargerStateRaw;  // [b13] 0x00 none / 0x19 begin / 0x7C bulk
+    bool     chargerActive;    // [b17] == 0x04
     uint8_t  rawStatus;
     bool     chargerDetected;
     bool     isCharging;      // bulk-charge phase active (status bit 5)
@@ -195,6 +241,20 @@ struct PackData {
 struct PackRecord {
     uint16_t regCYC;                           // cycle count at registration (UUID)
     uint8_t  maxSocAtReg;                      // maxSoc at registration (tiebreaker)
+    // ── Identity shown to the human ──────────────────────────────────────────
+    // autoNum is assigned ONCE at registration (first free 1..NUM_LABELS, in
+    // first-seen order) and never changes. It is bound to the PHYSICAL PACK, not
+    // the port, so it follows the battery into whatever port it is plugged into.
+    // No user action is required — this is the default identity.
+    // label is an OPTIONAL manual override: 0 = "use autoNum", 1..NUM_LABELS = this
+    // number instead. Set from the label picker; also bound to the pack.
+    uint8_t  autoNum;                          // 1..NUM_LABELS, 0 = not yet assigned
+    uint8_t  label;                            // 0 = use autoNum, else manual override
+    // True when two stored packs were too close in cycle count to tell apart at
+    // plug-in. The device then shows the PORT tag, attributes no history, and asks
+    // the owner to confirm once — rather than silently filing one pack's wear
+    // under another, which is the failure that matters when watching a weak pack.
+    bool     ambiguous;
     char     firstSeen[12];                    // "YYYY-MM-DD\0"
     uint16_t currentCycles;
     uint16_t sessions;
@@ -285,4 +345,6 @@ void packRegistryInit();
 void packRegistryIdentify(uint8_t port);
 void packRegistryRegister(uint8_t port);
 void packRegistrySessionUpdate(uint8_t port);
+void packRegistrySetLabel(uint8_t port, uint8_t label);  // manual override, pack-bound
+uint8_t packRegistryNumber(uint8_t port);                // override ?: autoNum, 0 = unknown
 const PackRecord* packRegGet(uint8_t port);

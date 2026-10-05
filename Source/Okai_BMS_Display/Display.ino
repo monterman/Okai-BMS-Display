@@ -80,19 +80,25 @@ static uint8_t nextConnectedPack(uint8_t cur) {
     return cur;
 }
 
-// ── Pack disconnect tracking ──────────────────────────────────────────────────
-#define DISCONNECT_DEBOUNCE_MS 120000UL  // 2 min — filters brief glitches and short stops
-static uint32_t _portLostMs[NUM_PACKS];
-static bool     _portWasValid[NUM_PACKS];
-
 // ── Overlay state ─────────────────────────────────────────────────────────────
-// Only one overlay active at a time: disconnect modal OR label picker
-static bool    _showDisconnect = false;
-static uint8_t _disconnectPort = 0;
+// 2026-10 - The pack-disconnect modal is GONE. It fired after 2 min of pack absence
+// and then sat on the display forever with no timeout, which is the single worst
+// offender against the rule below: it covered Home until a button was physically
+// pressed — on a sealed box, on the water. Nothing is lost by removing it. The
+// dropout is still recorded in the CSV by writePackEdges() (Logger.ino) with a
+// timestamp, and a missing pack now simply vanishes from the Home gauges.
+//
+// The label picker survives as the one overlay, because it is user-invoked rather
+// than self-raising, and it now self-dismisses after OVERLAY_TIMEOUT_MS.
+static bool     _showLabelPick  = false;
+static uint8_t  _labelPickPort  = 0;
+static uint8_t  _labelPickVal   = 0;   // 0=unassigned, 1-8=label
+static uint32_t _overlayShownMs = 0;   // last time the overlay opened or took a button
 
-static bool    _showLabelPick  = false;
-static uint8_t _labelPickPort  = 0;
-static uint8_t _labelPickVal   = 0;   // 0=unassigned, 1-8=label
+// One ask per insertion. When PackRegistry cannot tell two stored packs apart it sets
+// packRec[].ambiguous; we prompt once, then stay quiet until that port is re-seated,
+// so a pack it can never resolve does not nag on every refresh.
+static bool _ambiguousAsked[NUM_PACKS];
 
 // ── Alternating display phase (5 s primary / 3 s secondary) ─────────────────
 #define ALT_A_MS 5000UL
@@ -126,62 +132,61 @@ static uint8_t sohEstimate(uint8_t i) {
 
 // drawPageDots() removed — dots now live in drawHeader() top-right
 
-// ── Overlay: disconnect modal ─────────────────────────────────────────────────
-static void drawDisconnectModal() {
-    uint8_t port = _disconnectPort;
-    char lbl[6]; labelStr(port, lbl, sizeof(lbl));
-
-    _gfx->fillRect(8, 44, 304, 90, C_HDR);
-    _gfx->drawRect(8, 44, 304, 90, C_WARN);
-    _gfx->drawRect(9, 45, 302, 88, C_WARN);
-
-    _gfx->setTextSize(1);
-    _gfx->setTextColor(C_WARN);
-    _gfx->setCursor(18, 56);
-    char line[40];
-    snprintf(line, sizeof(line), "Port %u (pack L%s) disconnected", port+1, lbl);
-    _gfx->print(line);
-
-    _gfx->setTextColor(C_TEXT);
-    _gfx->setCursor(18, 70);
-    _gfx->print("Inserting a different pack?");
-
-    _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(18, 86);
-    _gfx->print("BTN1: Yes \x7e assign new label");
-
-    _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(18, 100);
-    _gfx->print("BTN2/BTN3: Dismiss");
-}
+// drawDisconnectModal() removed 2026-10 — see the overlay-state note above.
 
 // ── Overlay: label picker ─────────────────────────────────────────────────────
+// 2026-10 - Redrawn at readable sizes. The old version used setTextSize(1) — a 6x8
+// px font — for the title and the button hints on a 320x170 panel, which the owner
+// could not read. Everything here is size 2 or larger, and the value itself is size 6,
+// matching the Home gauges it sits over.
 static void drawLabelPicker() {
-    _gfx->fillRect(20, 54, 280, 72, C_HDR);
-    _gfx->drawRect(20, 54, 280, 72, C_ACCENT);
-    _gfx->drawRect(21, 55, 278, 70, C_ACCENT);
+    const int BX = 10, BY = 30, BW = 300, BH = 112;
+    _gfx->fillRect(BX, BY, BW, BH, C_HDR);
+    _gfx->drawRect(BX,     BY,     BW,     BH,     C_ACCENT);
+    _gfx->drawRect(BX + 1, BY + 1, BW - 2, BH - 2, C_ACCENT);
 
-    _gfx->setTextSize(1);
+    // Title — which pack we are naming, in the owner's terms
+    _gfx->setTextSize(2);
     _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(30, 66);
-    char title[36];
-    snprintf(title, sizeof(title), "Port %u \x7e assign pack label:", _labelPickPort+1);
-    _gfx->print(title);
+    _gfx->setCursor(BX + 12, BY + 10);
+    _gfx->print("WHICH PACK?");
 
-    // Big label value, centered
+    // Why we are asking, when the registry could not tell the packs apart
+    if (packRec[_labelPickPort].ambiguous) {
+        _gfx->setTextSize(1);
+        _gfx->setTextColor(C_WARN);
+        _gfx->setCursor(BX + 12, BY + 32);
+        char why[44];
+        snprintf(why, sizeof(why), "Port %u - cycles too close to tell apart",
+                 _labelPickPort + 1);
+        _gfx->print(why);
+    } else {
+        _gfx->setTextSize(1);
+        _gfx->setTextColor(C_DIM);
+        _gfx->setCursor(BX + 12, BY + 32);
+        char why[40];
+        snprintf(why, sizeof(why), "Port %u - set the pack number", _labelPickPort + 1);
+        _gfx->print(why);
+    }
+
+    // The value, big
     char valStr[4];
     if (_labelPickVal == 0) strcpy(valStr, "--");
     else snprintf(valStr, sizeof(valStr), "%u", _labelPickVal);
-    _gfx->setTextSize(3);
+    _gfx->setTextSize(6);
     _gfx->setTextColor(C_TEXT);
-    int16_t vw = (int16_t)strlen(valStr) * 18;
-    _gfx->setCursor(160 - vw/2, 80);
+    int16_t vw = (int16_t)strlen(valStr) * 36;
+    _gfx->setCursor(160 - vw / 2, BY + 46);
     _gfx->print(valStr);
 
-    _gfx->setTextSize(1);
+    // Button hints — size 2, one word each so they fit
+    _gfx->setTextSize(2);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(30, 114);
-    _gfx->print("BTN1:cycle  BTN2:confirm  BTN3:cancel");
+    _gfx->setCursor(BX + 12,  BY + 92);  _gfx->print("1:next");
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(BX + 112, BY + 92);  _gfx->print("2:OK");
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(BX + 196, BY + 92);  _gfx->print("3:cancel");
 }
 
 // ── Onboard 18650 battery sense ───────────────────────────────────────────────
@@ -282,6 +287,12 @@ static float    _pkPwrEma[NUM_PACKS] = {0};   // per-pack discharge-power EMA (W
 static uint8_t  _pkPwrN[NUM_PACKS]   = {0};
 static uint32_t _pkPwrLast = 0;
 
+// Separate, much slower ring for the charge direction — see CHG_* in Config.h for why
+// the discharge ring is unusable here (200 s window vs ~0.37 %/min of SOC movement).
+static struct { uint32_t t; uint8_t soc[NUM_PACKS]; } _chgRing[CHG_RING_LEN];
+static uint8_t  _chgCount    = 0;
+static uint32_t _chgLastSamp = 0;
+
 // Called every loop from displayLoop() — self-gated. Never touches the keep-alive.
 static void runtimeSample() {
     uint32_t now = millis();
@@ -289,9 +300,10 @@ static void runtimeSample() {
     uint32_t mask = 0; for (uint8_t k = 0; k < n; k++) mask |= (1u << list[k]);
     if (mask != _rtSetMask) {                       // connected set changed → restart clean
         _rtSetMask = mask; _rtCount = 0; _rtLastSamp = 0;
+        _chgCount  = 0;    _chgLastSamp = 0;        // the charge slope is set-sensitive too
         for (uint8_t i = 0; i < NUM_PACKS; i++) { _pkPwrEma[i] = 0; _pkPwrN[i] = 0; }
     }
-    if (n == 0) { _rtCount = 0; return; }
+    if (n == 0) { _rtCount = 0; _chgCount = 0; return; }
 
     // Per-pack discharge-power EMA @1 s (filters the 0x2020 / 8.224 A idle placeholder)
     if (now - _pkPwrLast >= 1000UL) {
@@ -319,6 +331,23 @@ static void runtimeSample() {
         for (uint8_t i = 0; i < NUM_PACKS; i++) _rtRing[keep].soc[i] = packs[i].soc;
         _rtCount = keep + 1;
     }
+
+    // Per-pack SOC ring @CHG_SAMPLE_MS — the charge-direction slope. Sampled
+    // unconditionally rather than only while charging, so the window is already warm
+    // the moment a charger is plugged in instead of making the owner wait 5 min.
+    if (_chgCount == 0 || (now - _chgLastSamp) >= CHG_SAMPLE_MS) {
+        _chgLastSamp = now;
+        uint8_t keep = 0;
+        for (uint8_t i = 0; i < _chgCount; i++)
+            if (now - _chgRing[i].t <= CHG_WINDOW_MS) _chgRing[keep++] = _chgRing[i];
+        if (keep >= CHG_RING_LEN) {
+            for (uint8_t i = 1; i < CHG_RING_LEN; i++) _chgRing[i-1] = _chgRing[i];
+            keep = CHG_RING_LEN - 1;
+        }
+        _chgRing[keep].t = now;
+        for (uint8_t i = 0; i < NUM_PACKS; i++) _chgRing[keep].soc[i] = packs[i].soc;
+        _chgCount = keep + 1;
+    }
 }
 
 // Minutes until pack p hits the reserve, or -1 if not yet computable.
@@ -341,9 +370,84 @@ static float packRuntimeMins(uint8_t p) {
     return -1.0f;
 }
 
+// ── Time-to-full estimator ────────────────────────────────────────────────────
+// 2026-10 - The mirror of packRuntimeMins(), run in the charge direction, so the owner
+// can plan a multi-pack charge instead of guessing.
+//
+// SLOPE IS PRIMARY, DELIBERATELY. The obvious calculation — remaining capacity divided
+// by charge current — is optimistic exactly where it matters: lithium charges at
+// constant current to roughly 80-90 %, then holds constant voltage while the current
+// tapers away, so the last stretch takes far longer than the linear maths predicts.
+// Measuring how fast SOC is actually climbing absorbs that taper for free. The
+// capacity/current figure is kept only as a cross-check for the early flat region.
+//
+// Returns minutes, or -1 while the ring is still warming up.
+static float packChargeMins(uint8_t p) {
+    uint8_t socNow = packs[p].soc;
+    if (socNow >= 100) return 0.0f;
+
+    float socMins = -1.0f;
+    if (_chgCount >= 2) {
+        uint32_t span = _chgRing[_chgCount-1].t - _chgRing[0].t;
+        // [0] is the OLDEST sample, [_chgCount-1] the newest — so a climb is new minus
+        // old, the exact inverse of the discharge path's drop. Uses the SLOW ring: on a
+        // 4.5 h charge the fast discharge ring sees ~1 % and would just read noise.
+        float    rise = (float)_chgRing[_chgCount-1].soc[p] - (float)_chgRing[0].soc[p];
+        if (span >= CHG_MIN_SPAN_MS && rise > 0.05f)
+            socMins = (100.0f - socNow) / (rise / (span / 60000.0f));
+    }
+
+    float curMins = -1.0f;
+    float amps = packs[p].current;                      // + = into the pack
+    if (amps > 0.2f && packs[p].capacityMah > 0)
+        curMins = ((100.0f - socNow) / 100.0f * (float)packs[p].capacityMah)
+                  / (amps * 1000.0f) * 60.0f;
+
+    if (socMins > 0 && curMins > 0) return 0.5f * socMins + 0.5f * curMins;
+    if (socMins > 0) return socMins;
+    if (curMins > 0) return curMins;
+    return -1.0f;
+}
+
+// Compact per-cell string for the Home gauges: "1h20", "45m", "BAL", "FULL", "--".
+// Balancing is reported by name rather than as a time: SOC barely moves during the
+// constant-voltage tail, so any extrapolation there reads as near-infinite.
+static void chargeTimeStr(uint8_t p, char* out, size_t len) {
+    if (packs[p].chargeDone)  { snprintf(out, len, "FULL"); return; }
+    if (packs[p].isBalancing) { snprintf(out, len, "BAL");  return; }
+    float m = packChargeMins(p);
+    if (m < 0)   { snprintf(out, len, "--");  return; }   // warming up
+    if (m > 599) { snprintf(out, len, ">9h"); return; }
+    uint16_t mm = (uint16_t)(m + 0.5f);
+    if (mm >= 60) snprintf(out, len, "%uh%02u", mm / 60, mm % 60);
+    else          snprintf(out, len, "%um", mm);
+}
+
 // Whole-buggy string = the WORST (soonest-to-reserve) connected pack.
 static void runtimeString(char* out, size_t len) {
-    if (logCurrentMode() == LOG_CHARGE) { snprintf(out, len, "CHARGING"); return; }
+    // While charging this used to print the literal word "CHARGING", throwing the
+    // estimate away at the one moment it is most useful. Now it reports when the LAST
+    // pack finishes — the number that says when you can actually walk away.
+    if (logCurrentMode() == LOG_CHARGE) {
+        uint8_t cl[NUM_PACKS]; uint8_t cn = buildConnectedList(cl);
+        float slowest = -1.0f; bool anyWorking = false;
+        for (uint8_t k = 0; k < cn; k++) {
+            uint8_t p = cl[k];
+            if (packs[p].chargeDone) continue;          // this one is done
+            anyWorking = true;
+            float m = packChargeMins(p);
+            if (m >= 0 && m > slowest) slowest = m;
+        }
+        if (!anyWorking)      snprintf(out, len, "ALL FULL");
+        else if (slowest < 0) snprintf(out, len, "CHARGING");       // still warming up
+        else if (slowest > 599) snprintf(out, len, "FULL IN >9h");
+        else {
+            uint16_t m = (uint16_t)(slowest + 0.5f);
+            if (m >= 60) snprintf(out, len, "FULL IN %uh%02um", m / 60, m % 60);
+            else         snprintf(out, len, "FULL IN %u min", m);
+        }
+        return;
+    }
     uint8_t list[NUM_PACKS]; uint8_t n = buildConnectedList(list);
     if (!n) { snprintf(out, len, "~-- min"); return; }
     float worst = -1.0f;
@@ -397,6 +501,14 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
     _gfx->fillRect(x + 1, y + 1, w - 2, h - 2, C_BG);
     _gfx->drawRect(x, y, w, h, hc);
 
+    // 2026-10 - While charging, each cell swaps its least useful readout for TIME TO
+    // FULL, so a multi-pack charge can be planned at a glance. The percentage keeps
+    // its full size on every tier — the line that gives way is voltage (tiers 3/4) or
+    // amps/watts (tiers 1/2), all of which matter less than "when is this done".
+    const bool chgMode = (logCurrentMode() == LOG_CHARGE);
+    char ct[10] = {0};
+    if (chgMode) chargeTimeStr(p, ct, sizeof(ct));
+
     if (tier == 1) {                                   // full detail
         drawCellTags(x, y, w, p, 2, true);
         _gfx->setTextSize(6); _gfx->setTextColor(hc);
@@ -404,10 +516,15 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         _gfx->setTextSize(3); _gfx->setTextColor(C_ACCENT);
         snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 174, y + 28); _gfx->print(b);
         _gfx->setTextColor(C_TEXT);
-        fmtAmps(b, sizeof(b), packs[p].current, 1, "A");   // "<0.0A" when a balancing trickle rounds away _gfx->setCursor(x + 174, y + 56); _gfx->print(b);
+        // "<0.0A" when a balancing trickle rounds away.
+        // 2026-10 - the setCursor/print below had been absorbed into the trailing
+        // comment on this line, so current never rendered on the 1-pack home tier.
+        fmtAmps(b, sizeof(b), packs[p].current, 1, "A");
+        _gfx->setCursor(x + 174, y + 56); _gfx->print(b);
         drawSocBarH(x + 10, y + 80, w - 20, 24, soc, hc);
         _gfx->setTextSize(2); _gfx->setTextColor(C_DIM);
-        snprintf(b, sizeof(b), "%.0fW", packs[p].voltage * packs[p].current); _gfx->setCursor(x + 10,  y + 114); _gfx->print(b);
+        if (chgMode) { _gfx->setTextColor(C_GOOD); _gfx->setCursor(x + 10, y + 114); _gfx->print(ct); _gfx->setTextColor(C_DIM); }
+        else { snprintf(b, sizeof(b), "%.0fW", packs[p].voltage * packs[p].current); _gfx->setCursor(x + 10,  y + 114); _gfx->print(b); }
         snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp);           _gfx->setCursor(x + 96,  y + 114); _gfx->print(b);
         snprintf(b, sizeof(b), "d%umV", dmv);                                 _gfx->setCursor(x + 176, y + 114); _gfx->print(b);
     } else if (tier == 2) {                            // large half
@@ -418,14 +535,19 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 68); _gfx->print(b);
         drawSocBarH(x + 6, y + 90, w - 12, 20, soc, hc);
         _gfx->setTextColor(C_TEXT);
-        fmtAmps(b, sizeof(b), packs[p].current, 1, "A");   // "<0.0A" when a balancing trickle rounds away _gfx->setCursor(x + 6, y + 116); _gfx->print(b);
+        // Same swallowed-by-comment bug as tier 1 — fixed 2026-10.
+        if (chgMode) { _gfx->setTextColor(C_GOOD); _gfx->setCursor(x + 6, y + 116); _gfx->print(ct); }
+        else { fmtAmps(b, sizeof(b), packs[p].current, 1, "A");
+               _gfx->setCursor(x + 6, y + 116); _gfx->print(b); }
         snprintf(b, sizeof(b), "%u*C", (unsigned)packs[p].maxTemp); _gfx->setCursor(x + w - 56, y + 116); _gfx->print(b);
     } else if (tier == 3) {                            // column: %, voltage, tall bar
         drawCellTags(x, y, w, p, 2, false);
         _gfx->setTextSize(3); _gfx->setTextColor(hc);
         snprintf(b, sizeof(b), "%u%%", soc); _gfx->setCursor(x + 6, y + 24); _gfx->print(b);
-        _gfx->setTextSize(2); _gfx->setTextColor(C_ACCENT);
-        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 50); _gfx->print(b);
+        _gfx->setTextSize(2);
+        if (chgMode) { _gfx->setTextColor(C_GOOD); _gfx->setCursor(x + 6, y + 50); _gfx->print(ct); }
+        else { _gfx->setTextColor(C_ACCENT);
+               snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); _gfx->setCursor(x + 6, y + 50); _gfx->print(b); }
         drawSocBarV(x + (w - 44) / 2, y + 74, 44, 60, soc, hc);
     } else {                                           // 4-pack slim column: fat bar + big %
         drawCellTags(x, y, w, p, 1, false);
@@ -434,8 +556,9 @@ static void drawHomeCell(int x, int y, int w, int h, uint8_t p, uint8_t tier) {
         snprintf(b, sizeof(b), "%u%%", soc);
         _gfx->setCursor(x + (w - (int)strlen(b) * 6 * ps) / 2, y + 22); _gfx->print(b);
         drawSocBarV(x + (w - 36) / 2, y + 50, 36, 78, soc, hc);
-        _gfx->setTextSize(1); _gfx->setTextColor(C_ACCENT);
-        snprintf(b, sizeof(b), "%.1fv", packs[p].voltage);
+        _gfx->setTextSize(1);
+        if (chgMode) { _gfx->setTextColor(C_GOOD); snprintf(b, sizeof(b), "%s", ct); }
+        else { _gfx->setTextColor(C_ACCENT); snprintf(b, sizeof(b), "%.1fv", packs[p].voltage); }
         _gfx->setCursor(x + (w - (int)strlen(b) * 6) / 2, y + 136); _gfx->print(b);
     }
 }
@@ -858,10 +981,8 @@ void displayInit() {
     _b1Ts   = _b2Ts   = _b3Ts   = 0;
 
     memset(_prevChargeDone,  0, sizeof(_prevChargeDone));
-    memset(_portLostMs,      0, sizeof(_portLostMs));
-    memset(_portWasValid,    0, sizeof(_portWasValid));
-    _showDisconnect = false;
     _showLabelPick  = false;
+    _overlayShownMs = 0;
 
     _bus = new Arduino_ESP32PAR8Q(
         TFT_DC, TFT_CS, TFT_WR, TFT_RD,
@@ -910,26 +1031,41 @@ void displayInit() {
     Serial.println("[DISP] ready 320x170, 4 screens");
 }
 
-// ── Disconnect detection ──────────────────────────────────────────────────────
-static void checkDisconnects(uint32_t now) {
-    for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        if (packs[i].valid) {
-            _portWasValid[i] = true;
-            _portLostMs[i]   = 0;
-        } else if (_portWasValid[i]) {
-            if (_portLostMs[i] == 0) _portLostMs[i] = now;
-            if ((now - _portLostMs[i]) > DISCONNECT_DEBOUNCE_MS) {
-                // Confirmed real disconnect after 30 s
-                _portWasValid[i] = false;
-                _portLostMs[i]   = 0;
-                if (!_showDisconnect && !_showLabelPick) {
-                    _showDisconnect = true;
-                    _disconnectPort = i;
-                    _labelPickVal   = labelGet(i);  // pre-fill with current label
-                }
-            }
-        }
+// ── HOME POLICY — the rule nothing may bypass ─────────────────────────────────
+// Home (screen 0, the adaptive pack gauges) is THE display. Everything else is a
+// detour the device must undo by itself.
+//
+// This runs unconditionally at the top of displayLoop(), ABOVE every early return.
+// That placement is the whole point: the previous code put the idle auto-return
+// below the overlay early-returns, so an overlay suppressed the very mechanism meant
+// to dismiss it — and the auto-return was additionally gated on !charging, so while
+// a charger was connected the display never came home at all. Between them, the
+// device could sit on the wrong screen indefinitely, on a sealed box, on the water.
+//
+// Two invariants, no exceptions:
+//   1. No overlay survives OVERLAY_TIMEOUT_MS without input.
+//   2. No screen other than Home survives HOME_IDLE_MS without input. Charging is
+//      NOT an exemption — plugging in may jump to the charging screen, but the same
+//      timer brings it home.
+static void enforceHomePolicy(uint32_t now) {
+    if (_showLabelPick && (now - _overlayShownMs) > OVERLAY_TIMEOUT_MS) {
+        _showLabelPick = false;
+        _dispLast      = 0;
     }
+    if (_screen != 0 && (now - _lastInputMs) > HOME_IDLE_MS) {
+        _screen   = 0;
+        _dispLast = 0;
+    }
+}
+
+// Open the label picker for a specific port, pre-filled with its current number.
+static void openLabelPicker(uint8_t port, uint32_t now) {
+    if (port >= NUM_PACKS) return;
+    _showLabelPick  = true;
+    _labelPickPort  = port;
+    _labelPickVal   = labelGet(port);
+    _overlayShownMs = now;
+    _dispLast       = 0;
 }
 
 void displayLoop() {
@@ -940,11 +1076,33 @@ void displayLoop() {
 
     uint32_t now = millis();
 
-    checkDisconnects(now);
-
     bool b1 = digitalRead(BUTTON1_PIN);
     bool b2 = digitalRead(BUTTON2_PIN);
     bool b3 = digitalRead(BUTTON3_PIN);
+
+    // Any press counts as activity. This MUST stay above the overlay early-return —
+    // it used to sit below it, so a press the overlay consumed never reset the idle
+    // timer and the overlay effectively froze the home countdown.
+    if (b1 == LOW || b2 == LOW || b3 == LOW) {
+        _lastInputMs = now;
+        if (_showLabelPick) _overlayShownMs = now;   // an edit in progress never times out
+    }
+
+    // Unconditional. Above every early return. See the note on enforceHomePolicy().
+    enforceHomePolicy(now);
+
+    // ── The one thing allowed to raise an overlay by itself ──────────────────
+    // The registry could not tell which stored pack this is (two too close in cycle
+    // count). Guessing would file a weak pack's decline against a healthy one, so ask
+    // instead — once per insertion. The 15 s timeout still applies, and declining just
+    // leaves the pack showing its port tag with no history attributed.
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        if (!packConnected(i)) { _ambiguousAsked[i] = false; continue; }   // re-arm on re-seat
+        if (packRec[i].ambiguous && !_ambiguousAsked[i] && !_showLabelPick) {
+            _ambiguousAsked[i] = true;
+            openLabelPicker(i, now);
+        }
+    }
 
     // ── Overlay: label picker
     if (_showLabelPick) {
@@ -968,27 +1126,9 @@ void displayLoop() {
         return;
     }
 
-    // ── Overlay: disconnect modal
-    if (_showDisconnect) {
-        if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
-            _b1Ts = now;
-            _showDisconnect = false;
-            _showLabelPick  = true;
-            _labelPickPort  = _disconnectPort;
-        }
-        if ((_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) ||
-            (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS)) {
-            _b2Ts = _b3Ts = now;
-            _showDisconnect = false;
-            _dispLast = 0;
-        }
-        _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
-        if (_showDisconnect) { drawDisconnectModal(); _canvas->flush(); }
-        return;
-    }
-
     // ── Normal button handling
-    if (b1 == LOW || b2 == LOW || b3 == LOW) _lastInputMs = now;   // any press resets the idle timer
+    // (disconnect-modal block removed 2026-10 — a missing pack now just vanishes from
+    //  the Home gauges; the dropout is still recorded in the CSV by writePackEdges())
 
     // BTN2+BTN3 combo: toggle the (now indicator-only) light flag — GPIO13 is NeoPixel strip 2
     static bool     _comboFired = false;
@@ -1030,10 +1170,20 @@ void displayLoop() {
     if (b3 == LOW && _b3Prev == HIGH && b2 == HIGH) _b3Ts = now;
     if (_b3Prev == LOW && b3 == HIGH) {
         uint32_t held = now - _b3Ts;
-        if (held >= LONGPRESS_MS && _screen == 0) {
-            _showLabelPick = true;
-            _labelPickPort = 0;
-            _labelPickVal  = labelGet(0);
+        if (held >= LONGPRESS_MS && (_screen == 0 || _screen == 1)) {
+            // 2026-10 - Was screen 0 only, and hardcoded port 0, so ports 2-4 were
+            // reachable ONLY through the disconnect modal — which no longer exists.
+            // Screen 1 names the pack it is showing (BTN1 there cycles connected
+            // packs, so every port is reachable); screen 0 names the first connected.
+            uint8_t port = 0;
+            if (_screen == 1) {
+                port = _detailPack;
+            } else {
+                for (uint8_t i = 0; i < NUM_PACKS; i++) {
+                    if (packConnected(i)) { port = i; break; }
+                }
+            }
+            openLabelPicker(port, now);
         } else if (held >= DEBOUNCE_MS && held < LONGPRESS_MS) {
             _screen = (_screen + NUM_SCREENS - 1) % NUM_SCREENS;
         }
@@ -1048,8 +1198,10 @@ void displayLoop() {
     if (charging && !_wasCharging)              { _screen = 2; _dispLast = 0; }   // charging started
     else if (!charging && _wasCharging && _screen == 2) { _screen = 0; _dispLast = 0; } // charging ended
     _wasCharging = charging;
-    // Idle auto-return to the dynamic Home (Fleet) — never while charging.
-    if (!charging && _screen != 0 && (now - _lastInputMs) > HOME_IDLE_MS) { _screen = 0; _dispLast = 0; }
+    // The idle auto-return used to live here, gated on !charging. Both the position
+    // and the gate were wrong: below the overlay early-returns it could be suppressed,
+    // and the gate meant the display never came home while a charger was plugged in.
+    // It now lives in enforceHomePolicy(), at the top of this function, ungated.
     // Detail (screen 1) must never sit on a disconnected pack.
     if (_screen == 1 && !packConnected(_detailPack) && anyConnected()) {
         _detailPack = nextConnectedPack(_detailPack); _dispLast = 0;

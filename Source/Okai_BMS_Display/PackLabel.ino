@@ -187,14 +187,26 @@ void timeSyncSet(int64_t browserEpochMs) {
 }
 
 // ── Label access ──────────────────────────────────────────────────────────────
+// 2026-10 - The number a human sees is now bound to the PHYSICAL PACK, not the port.
+// PackRegistry assigns every pack an autoNum at first registration and stores it in
+// that pack's /packs/CYC-XXXX.dat, so the number follows the battery into whatever
+// port it is plugged into — no user action, and it can no longer go stale the moment
+// packs are swapped, which is exactly why the old port-bound labels went unused.
+//
+// /labels.bin is now LEGACY. It is still read at boot and used as a fallback for a
+// port whose pack has not been identified yet (first few seconds after plug-in, or a
+// pack the registry cannot fingerprint). It is never written again.
 uint8_t labelGet(uint8_t port) {
-    return (port < NUM_PACKS) ? _labels[port] : 0;
+    if (port >= NUM_PACKS) return 0;
+    uint8_t n = packRegistryNumber(port);     // pack-bound: override ?: autoNum
+    if (n) return n;
+    return _labels[port];                     // legacy port-bound fallback
 }
 
 void labelSet(uint8_t port, uint8_t label) {
     if (port >= NUM_PACKS || label > NUM_LABELS) return;
-    _labels[port] = label;
-    saveLabels();
+    packRegistrySetLabel(port, label);         // no-op if the pack is unidentified
+    _labels[port] = label;                     // keep the legacy fallback coherent
 }
 
 // "3" if assigned, "P1" if not

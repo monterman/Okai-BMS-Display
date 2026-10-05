@@ -102,6 +102,12 @@ static bool _loadRecord(uint8_t port, const char* path) {
 
     _rdU16  (buf, "regCYC",           &r.regCYC);
     _rdU8   (buf, "maxSocAtReg",      &r.maxSocAtReg);
+    // autoNum / label are absent from pre-2026-10 records. _rdU8 leaves the field
+    // at its memset-0 value when the key is missing, and 0 is the correct default
+    // for both (0 autoNum = "assign on next registration", 0 label = "use autoNum"),
+    // so old files load cleanly with no version bump and no migration pass.
+    _rdU8   (buf, "autoNum",          &r.autoNum);
+    _rdU8   (buf, "label",            &r.label);
     _rdStr  (buf, "firstSeen",         r.firstSeen, sizeof(r.firstSeen));
     _rdU16  (buf, "currentCycles",    &r.currentCycles);
     _rdU16  (buf, "sessions",         &r.sessions);
@@ -132,6 +138,8 @@ static void _saveRecord(uint8_t port) {
 
     f.printf("regCYC=%u\n",           (unsigned)r.regCYC);
     f.printf("maxSocAtReg=%u\n",      (unsigned)r.maxSocAtReg);
+    f.printf("autoNum=%u\n",          (unsigned)r.autoNum);
+    f.printf("label=%u\n",            (unsigned)r.label);
     f.printf("firstSeen=%s\n",        r.firstSeen);
     f.printf("currentCycles=%u\n",    (unsigned)r.currentCycles);
     f.printf("sessions=%u\n",         (unsigned)r.sessions);
@@ -159,7 +167,122 @@ static void _saveRecord(uint8_t port) {
                   r.totalWhCharged, r.totalWhDischarged, (unsigned)r.sessions);
 }
 
+// ── Auto identity ─────────────────────────────────────────────────────────────
+// The human-facing pack number is assigned by the device, not the user. Scan every
+// stored record and return the first free number in 1..NUM_LABELS, so packs are
+// numbered in first-seen order and a number freed by a deleted record is reused.
+// Returns 0 if all numbers are taken (more packs than labels) — callers treat 0 as
+// "unnumbered" and fall back to the port tag.
+static uint8_t _nextFreeAutoNum() {
+    bool taken[NUM_LABELS + 1];
+    memset(taken, 0, sizeof(taken));
+
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f) {
+            const char* name = f.name();
+            f.close();
+            char path[32];
+            snprintf(path, sizeof(path), "/packs/%s", name);
+            File rf = LittleFS.open(path, "r");
+            if (rf) {
+                size_t sz = (size_t)rf.size();
+                char* buf = (sz > 0 && sz < 256) ? (char*)malloc(sz + 1) : nullptr;
+                if (buf) {
+                    rf.read((uint8_t*)buf, sz);
+                    buf[sz] = '\0';
+                    uint8_t n = 0;
+                    if (_rdU8(buf, "autoNum", &n) && n >= 1 && n <= NUM_LABELS) taken[n] = true;
+                    free(buf);
+                }
+                rf.close();
+            }
+            f = dir.openNextFile();
+        }
+    }
+    if (dir) dir.close();
+
+    for (uint8_t n = 1; n <= NUM_LABELS; n++) if (!taken[n]) return n;
+    return 0;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
+
+// Find the stored pack carrying human number n and adopt it into this port, so its
+// lifetime history continues instead of a duplicate record being created. Used when
+// the owner resolves an ambiguous insertion by telling us which pack it is.
+static bool _adoptByNumber(uint8_t port, uint8_t n) {
+    if (!n) return false;
+    char foundPath[40] = {0};
+
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f) {
+            char path[40];
+            snprintf(path, sizeof(path), "/packs/%s", f.name());
+            f.close();
+            File rf = LittleFS.open(path, "r");
+            if (rf) {
+                size_t sz = (size_t)rf.size();
+                char* buf = (sz > 0 && sz < 512) ? (char*)malloc(sz + 1) : nullptr;
+                if (buf) {
+                    rf.read((uint8_t*)buf, sz);
+                    buf[sz] = '\0';
+                    uint8_t a = 0, l = 0;
+                    _rdU8(buf, "autoNum", &a);
+                    _rdU8(buf, "label",   &l);
+                    free(buf);
+                    if ((l ? l : a) == n) strncpy(foundPath, path, sizeof(foundPath) - 1);
+                }
+                rf.close();
+            }
+            if (foundPath[0]) break;
+            f = dir.openNextFile();
+        }
+    }
+    if (dir) dir.close();
+    if (!foundPath[0]) return false;
+
+    _loadRecord(port, foundPath);
+    packRec[port].currentCycles = packs[port].cycles;   // re-anchor so the next match is tight
+    packRec[port].ambiguous     = false;
+    _saveRecord(port);
+    Serial.printf("[REG] port%u resolved by owner to #%u (%s)\n",
+                  port + 1, (unsigned)n, packRec[port].cycID);
+    return true;
+}
+
+// Manual override of the auto-assigned number. Bound to the PHYSICAL PACK, so it
+// follows the battery across ports. label 0 restores the automatic number.
+void packRegistrySetLabel(uint8_t port, uint8_t label) {
+    if (port >= NUM_PACKS || label > NUM_LABELS) return;
+
+    // Ambiguous insertion: the owner is telling us WHICH stored pack this is. Adopt
+    // that record so its wear history continues on the right battery — the whole
+    // reason for asking rather than guessing.
+    if (!packRec[port].known && packRec[port].ambiguous) {
+        if (_adoptByNumber(port, label)) return;
+        packRegistryRegister(port);            // no pack carries that number — it is new
+        packRec[port].label = label;
+        _saveRecord(port);
+        return;
+    }
+
+    if (!packRec[port].known) return;          // unidentified and not ambiguous — nowhere to store
+    packRec[port].label = label;
+    _saveRecord(port);
+    Serial.printf("[REG] port%u %s label override = %u\n",
+                  port + 1, packRec[port].cycID, (unsigned)label);
+}
+
+// What the human should see for the pack currently in this port:
+// manual override if set, else the auto-assigned number, else 0 = "unknown".
+uint8_t packRegistryNumber(uint8_t port) {
+    if (port >= NUM_PACKS || !packRec[port].known) return 0;
+    return packRec[port].label ? packRec[port].label : packRec[port].autoNum;
+}
 
 void packRegistryInit() {
     memset(packRec, 0, sizeof(packRec));
@@ -169,67 +292,104 @@ void packRegistryInit() {
 }
 
 // Called from UART.ino the moment a port goes from invalid → valid.
+// Called from UART.ino the moment a port goes from invalid -> valid.
+//
+// 2026-10 - MATCHING REWRITTEN. The previous scheme compared the live cycle count
+// against each record's REGISTRATION cycles with a +/-500 window and accepted the
+// FIRST file the directory walk returned. With this fleet spaced 10-17 cycles apart
+// that window spans several packs at once, so identity was effectively decided by
+// directory order and one pack's wear history could be filed under another. Now:
+//   - compare against LAST-SEEN cycles (currentCycles), which advances every sighting
+//   - take the NEAREST candidate, not the first
+//   - if the two best are within PACK_CYC_AMBIGUOUS of each other, refuse to guess
+// See Config.h for the fleet numbers that motivated each constant.
 void packRegistryIdentify(uint8_t port) {
     if (!fsReady || port >= NUM_PACKS) return;
 
     uint16_t curCyc = packs[port].cycles;
     uint8_t  curMax = packs[port].maxSoc;
-    packRec[port].known = false;
+    memset(&packRec[port], 0, sizeof(PackRecord));
 
-    // Scan all .dat files in /packs/
+    char     bestPath[40] = {0};
+    uint16_t bestDiff     = 0xFFFF;
+    uint16_t secondDiff   = 0xFFFF;
+
     File dir = LittleFS.open("/packs");
-    if (!dir || !dir.isDirectory()) {
-        if (dir) dir.close();
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f) {
+            char path[40];
+            snprintf(path, sizeof(path), "/packs/%s", f.name());
+            f.close();
+
+            File rf = LittleFS.open(path, "r");
+            if (rf) {
+                size_t sz = (size_t)rf.size();
+                char* buf = (sz > 0 && sz < 512) ? (char*)malloc(sz + 1) : nullptr;
+                if (buf) {
+                    rf.read((uint8_t*)buf, sz);
+                    buf[sz] = ' ';
+                    uint16_t rReg = 0, rCur = 0; uint8_t rMax = 0;
+                    _rdU16(buf, "regCYC",        &rReg);
+                    _rdU16(buf, "currentCycles", &rCur);
+                    _rdU8 (buf, "maxSocAtReg",   &rMax);
+                    free(buf);
+
+                    // Records written before currentCycles was tracked fall back to
+                    // registration cycles - the only sighting we ever had.
+                    uint16_t lastSeen = rCur ? rCur : rReg;
+
+                    // Cycle count only ever increases. A reading below last-seen is a
+                    // different pack (or a BMS reset), never this one.
+                    if (rReg && curCyc >= lastSeen) {
+                        uint16_t diff = curCyc - lastSeen;
+                        int socD = (int)curMax - (int)rMax;
+                        if (socD < 0) socD = -socD;
+                        if (diff <= PACK_CYC_MATCH_WINDOW && socD <= PACK_SOC_MATCH_SLACK) {
+                            if (diff < bestDiff) {
+                                secondDiff = bestDiff;
+                                bestDiff   = diff;
+                                strncpy(bestPath, path, sizeof(bestPath) - 1);
+                            } else if (diff < secondDiff) {
+                                secondDiff = diff;
+                            }
+                        }
+                    }
+                }
+                rf.close();
+            }
+            f = dir.openNextFile();
+        }
+    }
+    if (dir) dir.close();
+
+    if (bestPath[0] == ' ') {          // nothing close enough - a pack we have not met
         packRegistryRegister(port);
         return;
     }
 
-    File f = dir.openNextFile();
-    while (f) {
-        const char* name = f.name();   // base name only, e.g. "CYC-0054.dat"
-        f.close();
-
-        char path[32];
-        snprintf(path, sizeof(path), "/packs/%s", name);
-
-        // Quick-read just regCYC and maxSocAtReg from file
-        File rf = LittleFS.open(path, "r");
-        if (rf) {
-            size_t sz = (size_t)rf.size();
-            char* buf = (sz > 0 && sz < 256) ? (char*)malloc(sz + 1) : nullptr;
-            if (buf) {
-                rf.read((uint8_t*)buf, sz);
-                buf[sz] = '\0';
-                uint16_t rCYC = 0; uint8_t rMax = 0;
-                _rdU16(buf, "regCYC", &rCYC);
-                _rdU8 (buf, "maxSocAtReg", &rMax);
-                free(buf);
-
-                bool cycMatch = (curCyc >= rCYC) &&
-                                (curCyc - rCYC <= PACK_CYC_TOLERANCE);
-                bool maxMatch = (rMax == curMax);
-
-                if (cycMatch && maxMatch) {
-                    rf.close();
-                    dir.close();
-                    _loadRecord(port, path);
-                    packRec[port].currentCycles = curCyc;
-                    Serial.printf("[REG] port%u identified: %s  cyc=%u→%u\n",
-                                  port+1, packRec[port].cycID,
-                                  (unsigned)packRec[port].regCYC,
-                                  (unsigned)curCyc);
-                    return;
-                }
-            }
-            rf.close();
-        }
-
-        f = dir.openNextFile();
+    // Two stored packs within PACK_CYC_AMBIGUOUS of each other. Guessing here is how
+    // a weak pack's decline ends up recorded against a healthy one, so do not.
+    if (secondDiff != 0xFFFF && (secondDiff - bestDiff) <= PACK_CYC_AMBIGUOUS) {
+        packRec[port].known         = false;
+        packRec[port].ambiguous     = true;
+        packRec[port].currentCycles = curCyc;
+        Serial.printf("[REG] port%u AMBIGUOUS cyc=%u (best +%u, runner-up only %u further) - asking owner\n",
+                      port + 1, (unsigned)curCyc, (unsigned)bestDiff,
+                      (unsigned)(secondDiff - bestDiff));
+        return;
     }
-    dir.close();
 
-    // No match — register as new pack
-    packRegistryRegister(port);
+    _loadRecord(port, bestPath);
+    packRec[port].currentCycles = curCyc;
+    if (packRec[port].known && packRec[port].autoNum == 0) {
+        packRec[port].autoNum = _nextFreeAutoNum();   // backfill pre-auto-number records
+    }
+    _saveRecord(port);                  // advance last-seen cycles for the next match
+    Serial.printf("[REG] port%u identified: %s  #%u  cyc=%u (+%u since last seen)\n",
+                  port + 1, packRec[port].cycID,
+                  (unsigned)packRegistryNumber(port),
+                  (unsigned)curCyc, (unsigned)bestDiff);
 }
 
 // Called (internally and from UART) when a pack is seen for the first time.
@@ -244,6 +404,8 @@ void packRegistryRegister(uint8_t port) {
     r.currentCycles = r.regCYC;
     r.sessions     = 0;
     r.historyLen   = 0;
+    r.autoNum      = _nextFreeAutoNum();   // permanent human number, assigned once
+    r.label        = 0;                    // no manual override
 
     // Date string for firstSeen
     if (timeIsSynced()) {

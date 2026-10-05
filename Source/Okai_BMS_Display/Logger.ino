@@ -46,7 +46,10 @@ static char     _curFileName[44]  = {0};
 // 2 = Age_ms + Stale appended, plus "#### PACK LOST / BACK" marker lines mid-file.
 // A file with no FMT token is format 1. Columns are only ever APPENDED, so a reader
 // that indexes by position keeps working across versions.
-#define LOG_FORMAT_VERSION  2
+// 3 (2026-10): appended MaxSoC, CapacityMah, TempAvg_C, TempFET_C, TempMCU_C, ChgState,
+//              ChgAct. Columns 1-18 are byte-identical to FMT 2, so older readers that
+//              index by position keep working on FMT 3 files.
+#define LOG_FORMAT_VERSION  3
 
 // 2026-09-25 - Stale-frame marking.
 // WHAT WAS WRONG: when a pack stops transmitting, packs[] keeps its LAST received
@@ -128,9 +131,16 @@ static void writeFileHeader() {
     // 2026-07-26 - Rest column added. Delta_mV is still logged on EVERY row (raw
     // data is never thrown away) but only Rest=1 rows carry a health meaning, so
     // analysis can filter on it instead of guessing from Current_A.
+    // 2026-10 - FMT 3 appends seven health columns. APPENDED, never inserted: a FMT 2
+    // reader indexing the first 18 columns by position still parses these files.
+    // MaxSoC is the one that matters most and was simply missing — it is the BMS's own
+    // state-of-health number. TempFET_C is where a tiring pack shows thermal stress
+    // first. CapacityMah, the two other temperatures and the charger bytes were all
+    // decoded by the library and discarded.
     _logFile.println("Timestamp,UpSec,Label,Port,SOC,Voltage_V,Current_A,"
                      "Power_W,CellHigh_V,CellLow_V,Delta_mV,Rest,MaxTemp_C,Cycles,Status,Warn,"
-                     "Age_ms,Stale");
+                     "Age_ms,Stale,"
+                     "MaxSoC,CapacityMah,TempAvg_C,TempFET_C,TempMCU_C,ChgState,ChgAct");
     _fileSizeBytes = (uint32_t)_logFile.size();
 }
 
@@ -358,9 +368,10 @@ void loggerLoop() {
         const unsigned stale = (packs[i].lastUpdateMs == _rowFrameMs[i]) ? 1u : 0u;
         _rowFrameMs[i] = packs[i].lastUpdateMs;
 
-        char row[176];
+        char row[256];   // grown from 176 for the FMT 3 health columns
         int n = snprintf(row, sizeof(row),
-                 "%s,%lu,%s,%u,%u,%.3f,%+.3f,%.1f,%.3f,%.3f,%u,%u,%u,%u,0x%02X,%s,%lu,%u",
+                 "%s,%lu,%s,%u,%u,%.3f,%+.3f,%.1f,%.3f,%.3f,%u,%u,%u,%u,0x%02X,%s,%lu,%u"
+                 ",%u,%u,%u,%u,%u,0x%02X,%u",
                  ts, (unsigned long)upSec, lbl, (unsigned)(i+1),
                  (unsigned)packs[i].soc,
                  packs[i].voltage, packs[i].current, powerW,
@@ -370,7 +381,15 @@ void loggerLoop() {
                  (unsigned)packs[i].maxTemp,
                  (unsigned)packs[i].cycles,
                  (unsigned)packs[i].rawStatus, warn,
-                 (unsigned long)ageMs, stale);
+                 (unsigned long)ageMs, stale,
+                 // FMT 3 health columns
+                 (unsigned)packs[i].maxSoc,
+                 (unsigned)packs[i].capacityMah,
+                 (unsigned)packs[i].tempAvg,
+                 (unsigned)packs[i].tempFet,
+                 (unsigned)packs[i].tempMcu,
+                 (unsigned)packs[i].chargerStateRaw,
+                 packs[i].chargerActive ? 1u : 0u);
         _logFile.println(row);
         _fileSizeBytes += (uint32_t)(n + 1);
     }
