@@ -28,25 +28,50 @@ source file, so they are that commit exactly.
 This is the real `arduino-cli` recipe for this board, read out of `platform.txt` and `boards.txt`
 rather than remembered — same offsets, same flags, same baud:
 
+**Check the version first — the spelling differs and you cannot mix the two:**
+
+```bash
+esptool version
+```
+
+**esptool v5.x** (what `pipx install esptool` gives you today, and what the core bundles):
+
 ```bash
 esptool --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
   --before default-reset --after hard-reset \
-  write_flash -z --flash-mode keep --flash-freq keep --flash-size keep \
+  write-flash -z --flash-mode keep --flash-freq keep --flash-size keep \
   0x0     okai.bootloader.bin \
   0x8000  okai.partitions.bin \
   0xe000  boot_app0.bin \
   0x10000 okai.app.bin
 ```
 
-> **`write_flash` with an UNDERSCORE, deliberately.** `platform.txt` writes it as `write-flash`
-> because the core bundles esptool 5.2.0, which renamed the subcommands to hyphens. **esptool v4
-> accepts only the underscore form**, and v5 kept the underscore as an alias — so the underscore
-> works on both and the hyphen does not. Use the underscore unless you know you are on v5+.
+**esptool v4.x** — underscores throughout, including the option *values*:
+
+```bash
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
+  --before default_reset --after hard_reset \
+  write_flash -z --flash_mode keep --flash_freq keep --flash_size keep \
+  0x0     okai.bootloader.bin \
+  0x8000  okai.partitions.bin \
+  0xe000  boot_app0.bin \
+  0x10000 okai.app.bin
+```
+
+> **Do not mix the spellings.** v5 renamed the subcommand *and* the option names *and* their values
+> at once (`write_flash` → `write-flash`, `--flash_mode` → `--flash-mode`, `default_reset` →
+> `default-reset`, `read_mac` → `read-mac`). v5 still accepts the v4 spellings as deprecated
+> aliases; v4 accepts none of the v5 ones. So an underscore subcommand with hyphenated flags — the
+> obvious-looking middle ground — parses on neither. Pick one block and use it whole.
+>
+> The failure is harmless: a wrong spelling dies at argument parse, before anything is written.
 
 ## 🔴 Before you flash
 
-1. **Verify the board by MAC, not by port.** `esptool --port /dev/ttyACM0 read-mac` must return
-   **`a0:f2:62:e1:e9:ec`**. Ports float; the MAC does not.
+1. **Verify the board by MAC, not by port.** Ports float; the MAC does not. Must return
+   **`a0:f2:62:e1:e9:ec`**:
+   - v5: `esptool --port /dev/ttyACM0 read-mac`
+   - v4: `esptool.py --port /dev/ttyACM0 read_mac`
 2. **Do not pass `--erase-all`, and do not flash the merged image.** Either one wipes the `ffat`
    partition at `0x610000` (9.875 MB) — which holds every CSV log, the pack registry in `/packs/`,
    the labels, the clock offset and the session counters. Writing only the four offsets above leaves
