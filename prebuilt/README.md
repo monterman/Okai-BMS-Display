@@ -31,14 +31,17 @@ rather than remembered — same offsets, same flags, same baud:
 ```bash
 esptool --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
   --before default-reset --after hard-reset \
-  write-flash -z --flash-mode keep --flash-freq keep --flash-size keep \
+  write_flash -z --flash-mode keep --flash-freq keep --flash-size keep \
   0x0     okai.bootloader.bin \
   0x8000  okai.partitions.bin \
   0xe000  boot_app0.bin \
   0x10000 okai.app.bin
 ```
 
-If the installed `esptool` is v3 or older, the subcommand is `write_flash` with an underscore.
+> **`write_flash` with an UNDERSCORE, deliberately.** `platform.txt` writes it as `write-flash`
+> because the core bundles esptool 5.2.0, which renamed the subcommands to hyphens. **esptool v4
+> accepts only the underscore form**, and v5 kept the underscore as an alias — so the underscore
+> works on both and the hyphen does not. Use the underscore unless you know you are on v5+.
 
 ## 🔴 Before you flash
 
