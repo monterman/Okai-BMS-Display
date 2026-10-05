@@ -28,6 +28,10 @@ static uint16_t _curSession    = 0;
 static char     _curType       = 'R';
 static uint32_t _rideUntilMs  = 0;   // hysteresis end time
 
+// 2026-10-05 - Free-space guard bookkeeping. Declared up here because the file header
+// writer reports it, and that function is defined above the prune code.
+static uint16_t _prunedThisBoot = 0;   // log files the guard deleted since boot
+
 // 2026-07-26 - Crash-safe logging.
 // WHAT WAS WRONG: flush() pushes row data down, but LittleFS only commits a
 // file's DIRECTORY ENTRY (its size) on sync/close. Lose power mid-session and the
@@ -123,6 +127,19 @@ static void writeFileHeader() {
     }
     _logFile.println();
     _logFile.printf("# Segment: %u  MaxBytes: %lu\n", _segment, LOG_MAX_FILE_BYTES);
+
+    // 2026-10-05 - If the free-space guard had to delete anything, say so IN THE LOG.
+    // Losing old sessions silently is how a gap in a pack's wear history becomes a
+    // mystery six months later; this line dates the loss and counts it.
+    if (_prunedThisBoot) {
+        _logFile.printf("# Pruned: %u oldest log file(s) deleted this boot to keep "
+                        "%lu KB free\n",
+                        (unsigned)_prunedThisBoot,
+                        (unsigned long)(LOG_FS_RESERVE_BYTES / 1024UL));
+    }
+    _logFile.printf("# Flash: %lu KB free of %lu KB\n",
+                    (unsigned long)((LittleFS.totalBytes() - LittleFS.usedBytes()) / 1024UL),
+                    (unsigned long)(LittleFS.totalBytes() / 1024UL));
     // 2026-09-25 - Legend, so the file explains itself when it is read on a phone at
     // the beach with no docs to hand.
     _logFile.println("# Stale=1: row REPEATS the previous frame (pack stopped talking) "
@@ -144,7 +161,138 @@ static void writeFileHeader() {
     _fileSizeBytes = (uint32_t)_logFile.size();
 }
 
+// ── Free-space guard: auto-delete-oldest ──────────────────────────────────────
+// Rule and rationale: Config.h § LOG_FS_RESERVE_BYTES. Age comes off the SESSION
+// NUMBER, which is monotonic and persisted, so it works identically on dated
+// (Okai_RIDE_20260726_057_1.csv) and clock-less (Okai_RIDE_S057_1.csv) filenames.
+//
+// Split a log basename into stream type, session and segment. Returns false for
+// anything that is not one of our log files — which is how /packs, /labels.bin,
+// /labelseed.bin, /timesync.bin and /sessions.bin are kept out of reach.
+static bool _parseLogName(const char* name, char* type, uint16_t* sess, uint8_t* seg) {
+    if (strncmp(name, "Okai_", 5) != 0) return false;
+    const char* p = name + 5;
+    if      (strncmp(p, "RIDE_", 5) == 0) *type = 'R';
+    else if (strncmp(p, "CHRG_", 5) == 0) *type = 'C';
+    else return false;
+
+    const size_t len = strlen(name);
+    if (len < 12 || strcmp(name + len - 4, ".csv") != 0) return false;
+
+    // Session and segment are always the last two '_'-separated fields, in both
+    // filename forms. Work backwards so the optional date field is irrelevant.
+    const char* u2 = strrchr(name, '_');
+    if (!u2) return false;
+    char head[48];
+    const size_t hl = (size_t)(u2 - name);
+    if (hl == 0 || hl >= sizeof(head)) return false;
+    memcpy(head, name, hl);
+    head[hl] = '\0';
+    const char* u1 = strrchr(head, '_');
+    if (!u1) return false;
+
+    const char* s = u1 + 1;
+    if (*s == 'S') s++;                  // clock-less form: _S057_
+    *seg  = (uint8_t)atoi(u2 + 1);
+    *sess = (uint16_t)atoi(s);
+    return (*sess > 0);                  // session counters start at 1
+}
+
+// Lowest session number wins, then lowest segment. Of the two streams, thin the one
+// holding more files so a long run of charges cannot evict every ride log.
+static bool _findOldestLog(char* out, size_t outLen) {
+    uint16_t bestSess[2] = { 0xFFFF, 0xFFFF };
+    uint8_t  bestSeg [2] = { 0xFF, 0xFF };
+    char     bestName[2][44];
+    uint8_t  count[2]    = { 0, 0 };
+    bestName[0][0] = '\0';
+    bestName[1][0] = '\0';
+
+    File root = LittleFS.open("/");
+    if (!root) return false;
+    File f = root.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            char     type = 0;
+            uint16_t sess = 0;
+            uint8_t  seg  = 0;
+            const char* nm = f.name();          // base name, no leading '/'
+            if (_parseLogName(nm, &type, &sess, &seg)) {
+                const uint8_t k = (type == 'R') ? 0 : 1;
+                // Never the file being written, and never any segment of the session
+                // being written — the newest data is the whole point of the guard.
+                const bool isCurrent = (type == _curType && sess == _curSession);
+                const bool isActive  = (_curFileName[0] &&
+                                        strcmp(_curFileName + 1, nm) == 0);
+                if (!isCurrent && !isActive) {
+                    count[k]++;
+                    if (sess < bestSess[k] ||
+                        (sess == bestSess[k] && seg < bestSeg[k])) {
+                        bestSess[k] = sess;
+                        bestSeg [k] = seg;
+                        snprintf(bestName[k], sizeof(bestName[0]), "/%s", nm);
+                    }
+                }
+            }
+        }
+        File next = root.openNextFile();
+        f.close();
+        f = next;
+    }
+    root.close();
+
+    uint8_t pick = (count[0] >= count[1]) ? 0 : 1;
+    if (!bestName[pick][0]) pick ^= 1;
+    if (!bestName[pick][0]) return false;
+    strncpy(out, bestName[pick], outLen - 1);
+    out[outLen - 1] = '\0';
+    return true;
+}
+
+static void pruneLogsForSpace() {
+    if (!fsReady) return;
+    const size_t total = LittleFS.totalBytes();
+    if (total == 0) return;
+
+    const uint32_t t0 = millis();
+    uint8_t deleted = 0;
+    while (deleted < LOG_PRUNE_MAX_FILES) {
+        const size_t used = LittleFS.usedBytes();
+        const size_t freeB = (total > used) ? (total - used) : 0;
+        if (freeB >= LOG_FS_RESERVE_BYTES) break;
+
+        char victim[48];
+        if (!_findOldestLog(victim, sizeof(victim))) {
+            // Nothing left that we are allowed to delete. Say so loudly instead of
+            // spinning: the only remaining space is the session in progress.
+            Serial.printf("[LOG] LOW SPACE %u KB free and no prunable log left\n",
+                          (unsigned)(freeB / 1024));
+            break;
+        }
+        // The directory walk is finished and closed before this remove(). Deleting
+        // inside an open walk invalidates the handle — the bug that made the old
+        // "Delete all" button stop after one file.
+        if (!LittleFS.remove(victim)) {
+            Serial.printf("[LOG] prune FAILED to remove %s - giving up\n", victim);
+            break;
+        }
+        deleted++;
+        _prunedThisBoot++;
+        Serial.printf("[LOG] pruned %s (was %u KB free)\n",
+                      victim, (unsigned)(freeB / 1024));
+    }
+    if (deleted) {
+        Serial.printf("[LOG] prune: %u file(s) in %lu ms, %u KB free now\n",
+                      (unsigned)deleted, (unsigned long)(millis() - t0),
+                      (unsigned)((LittleFS.totalBytes() - LittleFS.usedBytes()) / 1024));
+    }
+}
+
 static void openFile() {
+    // Before creating anything: make room. Runs at session start and at every 256 KB
+    // segment roll, which is the only time the free-space number can have moved far.
+    pruneLogsForSpace();
+
     makeLogFilename(_curFileName, sizeof(_curFileName), _curType, _curSession, _segment);
     _logFile = LittleFS.open(_curFileName, "w", true);
     if (!_logFile) {

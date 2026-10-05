@@ -50,9 +50,66 @@
 #define LOG_RIDE_HYSTERESIS_MS  120000UL  // keep RIDE open 2 min after current drops
 #define LOG_MAX_FILE_BYTES      262144UL  // 256 KB per segment → roll to _2, _3…
 
+// 2026-10-05 - FREE-SPACE GUARD (auto-delete-oldest), owner's choice over a
+// stop-logging-with-a-warning design.
+//
+// WHAT WAS WRONG: nothing watched free space. LittleFS on the 9 MB ffat slot holds
+// roughly 13-14 three-pack outings at FMT 3 row sizes, and when it fills, writes
+// simply start failing — the newest session, the one being recorded, is the one lost.
+// Silently. That is backwards: the oldest session is always the least valuable.
+//
+// THE RULE: before opening any log file (new session OR segment roll), if free space
+// is under LOG_FS_RESERVE_BYTES, delete the oldest log files until it is not.
+//
+// AGE IS DECIDED BY SESSION NUMBER, NOT BY THE CLOCK. The session counters in
+// /sessions.bin are monotonic and persist across reboots, and both filename forms
+// carry them (Okai_RIDE_20260726_057_1.csv and Okai_RIDE_S057_1.csv), so the lowest
+// session number is the oldest session whether or not time was ever synced. Sorting
+// by name or by mtime would have put the no-clock files in an arbitrary place.
+//
+// SAFETY: only /Okai_{RIDE,CHRG}_*.csv in the root are ever candidates — the registry
+// (/packs/), /labels.bin, /labelseed.bin, /timesync.bin and /sessions.bin are not
+// touched. The file being written and anything from the CURRENT session are excluded.
+// At most LOG_PRUNE_MAX_FILES deletions per open, so one call cannot stall the loop
+// for long; the next open picks up where it left off if that was not enough.
+#define LOG_FS_RESERVE_BYTES   524288UL  // keep 512 KB free — 2 full segments of room
+#define LOG_PRUNE_MAX_FILES    3         // max deletions in a single openFile() call
+
 // ─── Pack labels ─────────────────────────────────────────────────────────────
 // Labels 1-8; 0 = unassigned (shows as P1/P2/P3/P4 in filenames)
 #define NUM_LABELS 8
+
+// 2026-10-05 - ONE-SHOT LABEL SEED.
+//
+// WHY THIS EXISTS: the only way to attach a number to a pack was the BTN3-hold
+// picker, and the owner never used it — it was a 6x8 font inside a sealed box. The
+// physical packs carry printed white labels, and on 2026-10-05 the owner read them
+// off the batteries sitting in the ports:
+//
+//     port 1 -> label 1      port 2 -> label 4      port 3 -> label 6
+//
+// So the firmware seeds those numbers itself, with no button presses. A seeded
+// number is written into that PACK's registry record (/packs/CYC-XXXX.dat), so from
+// then on it follows the battery into whatever port it is plugged into. The port
+// mapping below is only how the packs are introduced once.
+//
+// HOW IT CAN NEVER MISFIRE — three independent gates:
+//   1. VERSION. /labelseed.bin stores the version that has already been applied. The
+//      seed is live only on the FIRST boot after a flash that raises the version.
+//      Every later boot reads the file and stands down, so a reboot with different
+//      packs in those ports cannot relabel them.
+//   2. WINDOW. Within that one boot, only ports that come alive in the first
+//      LABEL_SEED_WINDOW_MS are seeded — i.e. packs already plugged in at power-on,
+//      which is the bench arrangement the owner just read the labels off.
+//   3. AMBIGUITY. A port whose pack the registry cannot identify with confidence is
+//      NOT seeded; the owner is asked instead. Seeding an ambiguous pack would create
+//      a duplicate record, which is the exact mis-filing the prompt exists to stop.
+//
+// TO RE-SEED after moving packs around: raise LABEL_SEED_VERSION, edit the table,
+// flash. Set an entry to 0 to leave that port alone.
+#define LABEL_SEED_VERSION   1
+#define LABEL_SEED_WINDOW_MS 120000UL   // seed only packs present in the first 2 min
+#define LABEL_SEED_LIST      { 1, 4, 6, 0 }   // ports 1-4; 0 = do not seed this port
 
 // ─── Cell health thresholds ──────────────────────────────────────────────────
 // 2026-07-26 - RAISED, and now only ever applied to a pack AT REST.

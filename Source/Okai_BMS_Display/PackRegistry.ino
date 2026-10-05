@@ -84,7 +84,11 @@ static uint8_t _rdU8Arr(const char* buf, const char* key,
 
 // ── Load / save ───────────────────────────────────────────────────────────────
 
-static bool _loadRecord(uint8_t port, const char* path) {
+// 2026-10-05 - Takes a PackRecord by reference rather than a port index, so a record
+// belonging to a pack that is NOT currently plugged in can be read and rewritten
+// without borrowing one of the four live port slots. _dedupeNumber() needs exactly
+// that: it has to renumber a stored pack sitting in a drawer.
+static bool _loadRecordInto(PackRecord& r, const char* path) {
     File f = LittleFS.open(path, "r");
     if (!f) return false;
 
@@ -97,7 +101,6 @@ static bool _loadRecord(uint8_t port, const char* path) {
     buf[sz] = '\0';
     f.close();
 
-    PackRecord& r = packRec[port];
     memset(&r, 0, sizeof(r));
 
     _rdU16  (buf, "regCYC",           &r.regCYC);
@@ -124,9 +127,12 @@ static bool _loadRecord(uint8_t port, const char* path) {
     return r.known;
 }
 
-static void _saveRecord(uint8_t port) {
+static bool _loadRecord(uint8_t port, const char* path) {
+    return _loadRecordInto(packRec[port], path);
+}
+
+static void _saveRecordOf(PackRecord& r) {
     if (!fsReady) return;
-    PackRecord& r = packRec[port];
     if (!r.known) return;
 
     char path[32]; _cycFilename(path, sizeof(path), r.regCYC);
@@ -167,15 +173,25 @@ static void _saveRecord(uint8_t port) {
                   r.totalWhCharged, r.totalWhDischarged, (unsigned)r.sessions);
 }
 
+static void _saveRecord(uint8_t port) {
+    if (port >= NUM_PACKS) return;
+    _saveRecordOf(packRec[port]);
+}
+
 // ── Auto identity ─────────────────────────────────────────────────────────────
 // The human-facing pack number is assigned by the device, not the user. Scan every
 // stored record and return the first free number in 1..NUM_LABELS, so packs are
 // numbered in first-seen order and a number freed by a deleted record is reused.
 // Returns 0 if all numbers are taken (more packs than labels) — callers treat 0 as
 // "unnumbered" and fall back to the port tag.
-static uint8_t _nextFreeAutoNum() {
-    bool taken[NUM_LABELS + 1];
-    memset(taken, 0, sizeof(taken));
+//
+// 2026-10-05 - Now counts EFFECTIVE numbers (label if set, else autoNum), not autoNum
+// alone. WHAT WAS WRONG: a stored pack with an explicit label of 4 left autoNum 4 free,
+// so the next unseen pack was handed 4 as its automatic number and two batteries showed
+// "4" on the home screen and in every CSV Label column. Harmless while nobody used
+// labels; actively misleading now that the fleet carries printed labels 1 / 4 / 6.
+static void _collectTakenNumbers(bool* taken, const char* excludePath) {
+    memset(taken, 0, (NUM_LABELS + 1) * sizeof(bool));
 
     File dir = LittleFS.open("/packs");
     if (dir && dir.isDirectory()) {
@@ -187,26 +203,203 @@ static uint8_t _nextFreeAutoNum() {
             char path[40];
             snprintf(path, sizeof(path), "/packs/%s", f.name());
             f.close();
-            File rf = LittleFS.open(path, "r");
-            if (rf) {
-                size_t sz = (size_t)rf.size();
-                char* buf = (sz > 0 && sz < 256) ? (char*)malloc(sz + 1) : nullptr;
-                if (buf) {
-                    rf.read((uint8_t*)buf, sz);
-                    buf[sz] = '\0';
-                    uint8_t n = 0;
-                    if (_rdU8(buf, "autoNum", &n) && n >= 1 && n <= NUM_LABELS) taken[n] = true;
-                    free(buf);
+            if (!excludePath || strcmp(path, excludePath) != 0) {
+                File rf = LittleFS.open(path, "r");
+                if (rf) {
+                    size_t sz = (size_t)rf.size();
+                    char* buf = (sz > 0 && sz < 512) ? (char*)malloc(sz + 1) : nullptr;
+                    if (buf) {
+                        rf.read((uint8_t*)buf, sz);
+                        buf[sz] = '\0';
+                        uint8_t a = 0, l = 0;
+                        _rdU8(buf, "autoNum", &a);
+                        _rdU8(buf, "label",   &l);
+                        free(buf);
+                        uint8_t eff = l ? l : a;
+                        if (eff >= 1 && eff <= NUM_LABELS) taken[eff] = true;
+                    }
+                    rf.close();
                 }
-                rf.close();
             }
             f = dir.openNextFile();
         }
     }
     if (dir) dir.close();
+}
 
+static uint8_t _lowestFree(const bool* taken) {
     for (uint8_t n = 1; n <= NUM_LABELS; n++) if (!taken[n]) return n;
     return 0;
+}
+
+static uint8_t _nextFreeAutoNum() {
+    bool taken[NUM_LABELS + 1];
+    _collectTakenNumbers(taken, nullptr);
+    return _lowestFree(taken);
+}
+
+// 2026-10-05 - A human number must point at exactly ONE battery.
+//
+// When a label is assigned, any OTHER stored pack already showing that number is
+// renumbered to the lowest free number. The newest statement from the owner wins,
+// because they are reading it off the sticker on the battery in their hand.
+//
+// A duplicate can arise two ways: an explicit label colliding with another pack's
+// automatic number (the common case — autoNum 4 was handed out before label 4 existed),
+// or two explicit labels colliding (the owner relabelled). Both are resolved by clearing
+// the loser's label and giving it a fresh autoNum, so no record is ever deleted and no
+// wear history is lost — only the displayed number moves.
+#define DEDUPE_MAX_VICTIMS 4
+static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
+    if (!fsReady || !n || n > NUM_LABELS) return;
+
+    char keepPath[40] = {0};
+    if (keepPort < NUM_PACKS && packRec[keepPort].known)
+        _cycFilename(keepPath, sizeof(keepPath), packRec[keepPort].regCYC);
+
+    // Collect the victims first. Rewriting records inside the directory walk would be
+    // mutating the directory that the open iterator is still reading.
+    char    victims[DEDUPE_MAX_VICTIMS][40];
+    uint8_t nv = 0;
+
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f && nv < DEDUPE_MAX_VICTIMS) {
+            char path[40];
+            snprintf(path, sizeof(path), "/packs/%s", f.name());
+            f.close();
+            if (!keepPath[0] || strcmp(path, keepPath) != 0) {
+                File rf = LittleFS.open(path, "r");
+                if (rf) {
+                    size_t sz = (size_t)rf.size();
+                    char* buf = (sz > 0 && sz < 512) ? (char*)malloc(sz + 1) : nullptr;
+                    if (buf) {
+                        rf.read((uint8_t*)buf, sz);
+                        buf[sz] = '\0';
+                        uint8_t a = 0, l = 0;
+                        _rdU8(buf, "autoNum", &a);
+                        _rdU8(buf, "label",   &l);
+                        free(buf);
+                        if ((l ? l : a) == n) {
+                            strncpy(victims[nv], path, sizeof(victims[0]) - 1);
+                            victims[nv][sizeof(victims[0]) - 1] = '\0';
+                            nv++;
+                        }
+                    }
+                    rf.close();
+                }
+            }
+            f = dir.openNextFile();
+        }
+        if (f) f.close();
+    }
+    if (dir) dir.close();
+
+    for (uint8_t v = 0; v < nv; v++) {
+        PackRecord tmp;
+        if (!_loadRecordInto(tmp, victims[v])) continue;
+
+        bool taken[NUM_LABELS + 1];
+        _collectTakenNumbers(taken, victims[v]);   // every number in use EXCEPT this one's
+        const uint8_t fresh = _lowestFree(taken);  // 0 = fleet outgrew NUM_LABELS
+
+        tmp.label   = 0;
+        tmp.autoNum = fresh;
+        _saveRecordOf(tmp);
+
+        // Keep a live port's RAM copy coherent — the duplicate may be plugged in right
+        // now, in which case the screen would otherwise keep showing the old number
+        // until the next re-identification.
+        for (uint8_t q = 0; q < NUM_PACKS; q++) {
+            if (q == keepPort || !packRec[q].known) continue;
+            if (packRec[q].regCYC == tmp.regCYC) {
+                packRec[q].label   = 0;
+                packRec[q].autoNum = fresh;
+            }
+        }
+        Serial.printf("[REG] #%u was duplicated by %s - renumbered to #%u\n",
+                      (unsigned)n, victims[v], (unsigned)fresh);
+    }
+}
+
+// ── One-shot label seed ───────────────────────────────────────────────────────
+// See Config.h § Pack labels for the owner's port->label table and the three gates
+// that make this fire exactly once. In short: version file, 2-minute window, and never
+// on a pack the registry could not identify.
+static const uint8_t _labelSeed[NUM_PACKS] = LABEL_SEED_LIST;
+static bool    _seedArmed = false;   // true only on the first boot after a version bump
+static uint8_t _seedUsed  = 0;       // bitmask of ports already seeded this boot
+
+static void _seedLoad() {
+    _seedArmed = false;
+    if (!fsReady) return;
+
+    uint8_t stored = 0;
+    File f = LittleFS.open("/labelseed.bin", "r");
+    if (f) {
+        if ((size_t)f.size() >= 1) f.read(&stored, 1);
+        f.close();
+    }
+    if (stored == LABEL_SEED_VERSION) {
+        Serial.printf("[SEED] label seed v%u already applied - standing down\n",
+                      (unsigned)stored);
+        return;
+    }
+
+    // Record "applied" NOW, before a single pack has been seen. If the board loses
+    // power halfway through seeding, the next boot must NOT re-arm and relabel whatever
+    // is in the ports then — a half-seeded fleet gets fixed by the picker or by a
+    // version bump, never by a silent retry with different batteries in the slots.
+    File w = LittleFS.open("/labelseed.bin", "w", true);
+    if (w) {
+        uint8_t v = LABEL_SEED_VERSION;
+        w.write(&v, 1);
+        w.close();
+    } else {
+        Serial.println("[SEED] cannot write /labelseed.bin - seeding SKIPPED rather "
+                       "than risk repeating every boot");
+        return;
+    }
+
+    _seedArmed = true;
+    _seedUsed  = 0;
+    Serial.printf("[SEED] ARMED v%u: port1->#%u port2->#%u port3->#%u port4->#%u, "
+                  "window %lu s\n",
+                  (unsigned)LABEL_SEED_VERSION,
+                  (unsigned)_labelSeed[0], (unsigned)_labelSeed[1],
+                  (unsigned)_labelSeed[2], (unsigned)_labelSeed[3],
+                  (unsigned long)(LABEL_SEED_WINDOW_MS / 1000UL));
+}
+
+// Called right after a port has been identified or registered.
+static void _applyLabelSeed(uint8_t port) {
+    if (!_seedArmed || port >= NUM_PACKS) return;
+    if (_seedUsed & (1u << port)) return;
+
+    if (millis() > LABEL_SEED_WINDOW_MS) {
+        _seedArmed = false;
+        Serial.println("[SEED] window closed - seed retired, numbers are now manual only");
+        return;
+    }
+
+    const uint8_t n = _labelSeed[port];
+    if (!n || n > NUM_LABELS) return;
+
+    if (!packRec[port].known) {
+        // Ambiguous or unidentifiable. Writing a label here would mean registering a
+        // brand-new record for a battery we already believe is one of two known ones.
+        Serial.printf("[SEED] port%u not identified - NOT seeding; if the screen asks, "
+                      "answer #%u\n", port + 1, (unsigned)n);
+        return;
+    }
+
+    _seedUsed |= (1u << port);
+    packRec[port].label = n;
+    _saveRecord(port);
+    _dedupeNumber(port, n);
+    Serial.printf("[SEED] port%u %s = #%u (owner's printed label)\n",
+                  port + 1, packRec[port].cycID, (unsigned)n);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -297,12 +490,16 @@ void packRegistrySetLabel(uint8_t port, uint8_t label) {
         packRegistryRegister(port);            // no pack carries that number — it is new
         packRec[port].label = label;
         _saveRecord(port);
+        _dedupeNumber(port, label);
         return;
     }
 
     if (!packRec[port].known) return;          // unidentified and not ambiguous — nowhere to store
     packRec[port].label = label;
     _saveRecord(port);
+    // Save BEFORE dedupe: the scan reads this record back off flash to work out which
+    // numbers are still free, so it has to already see the new one as taken.
+    _dedupeNumber(port, label);
     Serial.printf("[REG] port%u %s label override = %u\n",
                   port + 1, packRec[port].cycID, (unsigned)label);
 }
@@ -319,6 +516,7 @@ void packRegistryInit() {
     if (!fsReady) return;
     if (!LittleFS.exists("/packs")) LittleFS.mkdir("/packs");
     Serial.println("[REG] ready — /packs directory ensured");
+    _seedLoad();   // arms the one-shot label seed on the first boot after a flash
 }
 
 // Called from UART.ino the moment a port goes from invalid → valid.
@@ -395,6 +593,7 @@ void packRegistryIdentify(uint8_t port) {
 
     if (bestPath[0] == '\0') {          // nothing close enough - a pack we have not met
         packRegistryRegister(port);
+        _applyLabelSeed(port);
         return;
     }
 
@@ -407,6 +606,7 @@ void packRegistryIdentify(uint8_t port) {
         Serial.printf("[REG] port%u AMBIGUOUS cyc=%u (best +%u, runner-up only %u further) - asking owner\n",
                       port + 1, (unsigned)curCyc, (unsigned)bestDiff,
                       (unsigned)(secondDiff - bestDiff));
+        _applyLabelSeed(port);   // prints the number to answer with; seeds nothing
         return;
     }
 
@@ -416,6 +616,7 @@ void packRegistryIdentify(uint8_t port) {
         packRec[port].autoNum = _nextFreeAutoNum();   // backfill pre-auto-number records
     }
     _saveRecord(port);                  // advance last-seen cycles for the next match
+    _applyLabelSeed(port);
     Serial.printf("[REG] port%u identified: %s  #%u  cyc=%u (+%u since last seen)\n",
                   port + 1, packRec[port].cycID,
                   (unsigned)packRegistryNumber(port),

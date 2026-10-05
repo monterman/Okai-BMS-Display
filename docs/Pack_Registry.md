@@ -17,6 +17,46 @@ Physical packs identified by charge cycle count (CYC fingerprint). The BMS proto
 
 **Never re-ask which pack is #1. It is CYC-37. Never re-ask which pack is #5. It is CYC-78/79.**
 
+### 🔒 2026-10-05 — owner's port→label reading, three packs in service
+
+The owner read the printed white labels off the batteries sitting in the ports:
+
+| BMS port | Physical pack label |
+|---|---|
+| **Port 1** | **#1** |
+| **Port 2** | **#4** |
+| **Port 3** | **#6** |
+
+**Corrects a provisional note made earlier the same day** which recorded today's port-3 pack as
+"#3". It is **#6**. The labels are not contiguous — 1, 4, 6 — so a pack numbered #3 exists and was
+simply not in service today.
+
+**This agrees with the locked identity above:** port 1 = **#1** = **CYC-37**, independently
+confirmed on port 1 on 2026-07-26. Two readings three months apart, same port, same label.
+
+**Two conflicts it does NOT resolve, left open deliberately:**
+
+- The July line further down reads *"#3 → port 2 (CYC-38)"*, and the locked section reads
+  *"#1 = CYC-37"*. **CYC-37 and CYC-38 are one cycle apart — almost certainly the same battery,
+  recorded under two different labels.** That is precisely the mis-attribution the ±500 tolerance
+  made possible. Do not reconcile these by reasoning; wait for the readout below.
+- July had **#4 on port 3**; today #4 is on **port 2**. Packs move between ports, which is the whole
+  reason numbers are now bound to the pack and not the port.
+
+**How the label→CYC map gets closed, without asking the owner again.** The one-shot label seed
+(`LABEL_SEED_LIST { 1, 4, 6, 0 }`, `Config.h`) writes these numbers into each pack's own registry
+record at the first boot after flashing, and prints one line per port as it does:
+
+```
+[SEED] port1 CYC-0037 = #1 (owner's printed label)
+[SEED] port2 CYC-XXXX = #4 (owner's printed label)
+[SEED] port3 CYC-XXXX = #6 (owner's printed label)
+```
+
+**Capture that serial output at the first boot after flashing and paste it here.** It is the
+authoritative `#N ↔ CYC` binding this document has been asking for since the 2026-07-18 action
+item at the bottom of the file, and it arrives without a single question to the owner.
+
 ### ⚠️ The CYC fingerprint DRIFTS — match with tolerance, not equality
 Pack #5 read **CYC-78** in May and **CYC-79** on 2026-07-27. **The fingerprint is a cycle counter, so it increments every time the pack is charged.** It is unique within the fleet only because the gaps between packs are large (37 · 54 · 65 · 78 · 8229 · 8246 · 8256).
 
