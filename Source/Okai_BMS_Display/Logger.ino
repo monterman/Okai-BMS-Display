@@ -170,10 +170,18 @@ static void writeFileHeader() {
 // anything that is not one of our log files — which is how /packs, /labels.bin,
 // /labelseed.bin, /timesync.bin and /sessions.bin are kept out of reach.
 static bool _parseLogName(const char* name, char* type, uint16_t* sess, uint8_t* seg) {
-    if (strncmp(name, "Okai_", 5) != 0) return false;
-    const char* p = name + 5;
-    if      (strncmp(p, "RIDE_", 5) == 0) *type = 'R';
-    else if (strncmp(p, "CHRG_", 5) == 0) *type = 'C';
+    if (strncmp(name, "Okai_", 5) == 0) {
+        const char* p = name + 5;
+        if      (strncmp(p, "RIDE_", 5) == 0) *type = 'R';
+        else if (strncmp(p, "CHRG_", 5) == 0) *type = 'C';
+        else return false;
+    }
+    // 2026-10-05 - F-13: the pre-2026-07-26 naming was R_*/C_*. Files from that era are
+    // still on the device and were invisible to the guard, so they could never be pruned
+    // and sat as permanently dead space — which is exactly the problem the guard exists
+    // to solve. They carry the same trailing _session_segment fields.
+    else if (name[0] == 'R' && name[1] == '_') *type = 'R';
+    else if (name[0] == 'C' && name[1] == '_') *type = 'C';
     else return false;
 
     const size_t len = strlen(name);
@@ -200,7 +208,7 @@ static bool _parseLogName(const char* name, char* type, uint16_t* sess, uint8_t*
 
 // Lowest session number wins, then lowest segment. Of the two streams, thin the one
 // holding more files so a long run of charges cannot evict every ride log.
-static bool _findOldestLog(char* out, size_t outLen) {
+static bool _findOldestLog(char* out, size_t outLen, bool respectFloor) {
     uint16_t bestSess[2] = { 0xFFFF, 0xFFFF };
     uint8_t  bestSeg [2] = { 0xFF, 0xFF };
     char     bestName[2][44];
@@ -241,9 +249,20 @@ static bool _findOldestLog(char* out, size_t outLen) {
     }
     root.close();
 
-    uint8_t pick = (count[0] >= count[1]) ? 0 : 1;
-    if (!bestName[pick][0]) pick ^= 1;
-    if (!bestName[pick][0]) return false;
+    // 2026-10-05 - F-4: a stream at the floor is not eligible, so a long run of charges
+    // cannot evict every ride log. The floor is a PREFERENCE, not an absolute —
+    // pruneLogsForSpace retries with respectFloor=false rather than let the session
+    // being recorded fail to write, which is the failure the whole guard exists to stop.
+    const uint8_t floorN = respectFloor ? LOG_PRUNE_KEEP_MIN : 0;
+    const bool ok0 = bestName[0][0] && (count[0] > floorN);
+    const bool ok1 = bestName[1][0] && (count[1] > floorN);
+
+    uint8_t pick;
+    if (ok0 && ok1) pick = (count[0] >= count[1]) ? 0 : 1;  // thin the larger stream
+    else if (ok0)   pick = 0;
+    else if (ok1)   pick = 1;
+    else            return false;
+
     strncpy(out, bestName[pick], outLen - 1);
     out[outLen - 1] = '\0';
     return true;
@@ -262,9 +281,11 @@ static void pruneLogsForSpace() {
         if (freeB >= LOG_FS_RESERVE_BYTES) break;
 
         char victim[48];
-        if (!_findOldestLog(victim, sizeof(victim))) {
-            // Nothing left that we are allowed to delete. Say so loudly instead of
-            // spinning: the only remaining space is the session in progress.
+        if (!_findOldestLog(victim, sizeof(victim), true) &&
+            !_findOldestLog(victim, sizeof(victim), false)) {
+            // Nothing left that we are allowed to delete, even ignoring the per-stream
+            // floor. Say so loudly instead of spinning: the only remaining space is the
+            // session in progress.
             Serial.printf("[LOG] LOW SPACE %u KB free and no prunable log left\n",
                           (unsigned)(freeB / 1024));
             break;
@@ -433,6 +454,15 @@ static void enterMode(LogMode newMode) {
     _mode     = newMode;
     _segment  = 1;
     _curType  = (newMode == LOG_RIDE) ? 'R' : 'C';
+
+    // 2026-10-05 - F-7: make room BEFORE writing /sessions.bin, not after.
+    // saveSessions() used to run while the filesystem was still full, so the write that
+    // persists the new session number was the one most likely to fail — and a failed save
+    // means the counter rolls back on the next boot and starts reusing filenames that
+    // already exist. _curSession still holds the session that just closed, so that one is
+    // protected by the same guard that protects the file being written.
+    pruneLogsForSpace();
+
     _curSession = (newMode == LOG_RIDE) ? sessRideNext() : sessChargeNext();
     saveSessions();
     openFile();

@@ -120,6 +120,12 @@ static bool _loadRecordInto(PackRecord& r, const char* path) {
     _rdU8Arr (buf, "sohHistory",       r.sohHistory,    PACK_HISTORY_LEN);
     _rdU8   (buf, "historyLen",       &r.historyLen);
 
+    // 2026-10-05 - F-11: clamp. historyLen comes straight out of a text file; a damaged
+    // or hand-edited record could carry any value up to 255, and both history arrays are
+    // PACK_HISTORY_LEN long. _saveRecordOf loops to historyLen, so an oversized value
+    // reads past the end of both arrays and writes a record that cannot be loaded back.
+    if (r.historyLen > PACK_HISTORY_LEN) r.historyLen = PACK_HISTORY_LEN;
+
     snprintf(r.cycID, sizeof(r.cycID), "CYC-%u", (unsigned)r.regCYC);
     r.known = (r.regCYC > 0);
 
@@ -318,8 +324,19 @@ static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
                 packRec[q].autoNum = fresh;
             }
         }
-        Serial.printf("[REG] #%u was duplicated by %s - renumbered to #%u\n",
-                      (unsigned)n, victims[v], (unsigned)fresh);
+        if (fresh) {
+            Serial.printf("[REG] #%u was duplicated by %s - renumbered to #%u\n",
+                          (unsigned)n, victims[v], (unsigned)fresh);
+        } else {
+            // 2026-10-05 - F-6. Only reachable with more than NUM_LABELS packs on file.
+            // The record keeps its full history; it just has no number to show, and
+            // labelStr() falls back to the port tag. Say so rather than leave a pack
+            // silently nameless.
+            Serial.printf("[REG] #%u was duplicated by %s - but all %u numbers are "
+                          "taken, so it now has NONE. Delete a retired pack's record "
+                          "or raise NUM_LABELS\n",
+                          (unsigned)n, victims[v], (unsigned)NUM_LABELS);
+        }
     }
 }
 
@@ -328,8 +345,19 @@ static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
 // that make this fire exactly once. In short: version file, 2-minute window, and never
 // on a pack the registry could not identify.
 static const uint8_t _labelSeed[NUM_PACKS] = LABEL_SEED_LIST;
-static bool    _seedArmed = false;   // true only on the first boot after a version bump
-static uint8_t _seedUsed  = 0;       // bitmask of ports already seeded this boot
+static bool     _seedArmed  = false;  // true only on the first boot after a version bump
+static uint8_t  _seedUsed   = 0;      // bitmask of ports already seeded this boot
+// 2026-10-05 - F-9: measure the window from when the seed ARMED, not from millis()==0.
+// ESP-IDF keeps the microsecond counter running across deep sleep, so after a sleep
+// millis() can already exceed the window and the one shot would be spent silently
+// without a single pack having been looked at.
+static uint32_t _seedArmedMs = 0;
+
+// 2026-10-05 - F-1: how good the match was that set packRec[port].known.
+// 0 = brand-new registration (cannot be a mis-match: the record was just created for
+// the pack in front of us). 0xFFFF = nothing identified. Anything else is the forward
+// cycle drift against the matched record's last-seen count.
+static uint16_t _matchDiff[NUM_PACKS];
 
 static void _seedLoad() {
     _seedArmed = false;
@@ -362,8 +390,9 @@ static void _seedLoad() {
         return;
     }
 
-    _seedArmed = true;
-    _seedUsed  = 0;
+    _seedArmed   = true;
+    _seedUsed    = 0;
+    _seedArmedMs = millis();
     Serial.printf("[SEED] ARMED v%u: port1->#%u port2->#%u port3->#%u port4->#%u, "
                   "window %lu s\n",
                   (unsigned)LABEL_SEED_VERSION,
@@ -377,7 +406,7 @@ static void _applyLabelSeed(uint8_t port) {
     if (!_seedArmed || port >= NUM_PACKS) return;
     if (_seedUsed & (1u << port)) return;
 
-    if (millis() > LABEL_SEED_WINDOW_MS) {
+    if ((millis() - _seedArmedMs) > LABEL_SEED_WINDOW_MS) {
         _seedArmed = false;
         Serial.println("[SEED] window closed - seed retired, numbers are now manual only");
         return;
@@ -391,6 +420,20 @@ static void _applyLabelSeed(uint8_t port) {
         // brand-new record for a battery we already believe is one of two known ones.
         Serial.printf("[SEED] port%u not identified - NOT seeding; if the screen asks, "
                       "answer #%u\n", port + 1, (unsigned)n);
+        return;
+    }
+
+    // GATE 4 (Config.h § PACK_SEED_MAX_DRIFT): a confident match is not the same as a
+    // correct one. Demand a tight match, or a registration we just created ourselves.
+    const uint16_t drift   = _matchDiff[port];
+    const bool     socSame = (packRec[port].maxSocAtReg == packs[port].maxSoc);
+    if (drift != 0 && (drift > PACK_SEED_MAX_DRIFT || !socSame)) {
+        Serial.printf("[SEED] port%u %s match too loose to label (+%u cyc, maxSoc %u vs "
+                      "%u) - NOT seeding #%u. Use the picker, or plug the right pack in "
+                      "and bump LABEL_SEED_VERSION\n",
+                      port + 1, packRec[port].cycID, (unsigned)drift,
+                      (unsigned)packs[port].maxSoc, (unsigned)packRec[port].maxSocAtReg,
+                      (unsigned)n);
         return;
     }
 
@@ -496,6 +539,23 @@ void packRegistrySetLabel(uint8_t port, uint8_t label) {
 
     if (!packRec[port].known) return;          // unidentified and not ambiguous — nowhere to store
     packRec[port].label = label;
+
+    // 2026-10-05 - F-5: clearing the override back to "automatic" has to re-check the
+    // autoNum underneath it. That number was assigned before the label existed and may
+    // have been handed to another pack in the meantime (or renumbered by _dedupeNumber),
+    // so simply revealing it again can resurrect the duplicate this whole change removes.
+    if (label == 0) {
+        bool taken[NUM_LABELS + 1];
+        char self[40]; _cycFilename(self, sizeof(self), packRec[port].regCYC);
+        _collectTakenNumbers(taken, self);
+        if (!packRec[port].autoNum || taken[packRec[port].autoNum])
+            packRec[port].autoNum = _lowestFree(taken);
+        _saveRecord(port);
+        Serial.printf("[REG] port%u %s override cleared - automatic number is #%u\n",
+                      port + 1, packRec[port].cycID, (unsigned)packRec[port].autoNum);
+        return;
+    }
+
     _saveRecord(port);
     // Save BEFORE dedupe: the scan reads this record back off flash to work out which
     // numbers are still free, so it has to already see the new one as taken.
@@ -537,6 +597,14 @@ void packRegistryIdentify(uint8_t port) {
     uint16_t curCyc = packs[port].cycles;
     uint8_t  curMax = packs[port].maxSoc;
     memset(&packRec[port], 0, sizeof(PackRecord));
+    _matchDiff[port] = 0xFFFF;          // nothing identified yet
+
+    // 2026-10-05 - F-15: a different battery is now in this port, so the session energy
+    // accumulated by the previous one must not keep adding to it. packRegistrySessionUpdate
+    // zeroes these at session close, but a swap mid-session used to carry the old pack's
+    // Wh straight onto the new pack's lifetime total.
+    packs[port].whIn  = 0.0f;
+    packs[port].whOut = 0.0f;
 
     char     bestPath[40] = {0};
     uint16_t bestDiff     = 0xFFFF;
@@ -610,8 +678,35 @@ void packRegistryIdentify(uint8_t port) {
         return;
     }
 
+    // 2026-10-05 - F-2: refuse a record another port already holds. _adoptByNumber has
+    // had this check since it was written; identification did not, which is the path
+    // that actually runs on every plug-in.
+    //
+    // WHY IT MATTERS: two ports carrying the same regCYC both write the SAME file at
+    // session close, so one port's entire session Wh and its sessions++ are lost to
+    // last-writer-wins and historyLen diverges between the two copies. With the seed
+    // armed it also mislabels — port 1 writes label 1, port 2 overwrites it with label 4
+    // in that same file, and _dedupeNumber finds no victim because the file it would
+    // have to fix is the one it is told to keep.
+    for (uint8_t q = 0; q < NUM_PACKS; q++) {
+        if (q == port || !packRec[q].known) continue;
+        char other[40]; _cycFilename(other, sizeof(other), packRec[q].regCYC);
+        if (strcmp(other, bestPath) == 0) {
+            packRec[port].known         = false;
+            packRec[port].ambiguous     = true;
+            packRec[port].currentCycles = curCyc;
+            _matchDiff[port]            = 0xFFFF;
+            Serial.printf("[REG] port%u best match %s is already held by port%u - "
+                          "treating as ambiguous, asking owner\n",
+                          port + 1, bestPath, q + 1);
+            _applyLabelSeed(port);      // prints the number to answer with; seeds nothing
+            return;
+        }
+    }
+
     _loadRecord(port, bestPath);
     packRec[port].currentCycles = curCyc;
+    _matchDiff[port] = bestDiff;        // how much to trust this for seeding — see F-1
     if (packRec[port].known && packRec[port].autoNum == 0) {
         packRec[port].autoNum = _nextFreeAutoNum();   // backfill pre-auto-number records
     }
@@ -651,6 +746,9 @@ void packRegistryRegister(uint8_t port) {
 
     snprintf(r.cycID, sizeof(r.cycID), "CYC-%u", (unsigned)r.regCYC);
     r.known = true;
+    // A record created from the pack in front of us cannot be a mis-match, so the seed
+    // is allowed to label it (Config.h § PACK_SEED_MAX_DRIFT).
+    _matchDiff[port] = 0;
 
     _saveRecord(port);
     Serial.printf("[REG] port%u registered NEW pack: %s  maxSoc=%u%%\n",

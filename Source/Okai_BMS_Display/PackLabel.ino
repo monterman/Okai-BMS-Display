@@ -107,10 +107,21 @@ static void loadSessions() {
 void saveSessions() {
     if (!fsReady) return;
     File f = LittleFS.open("/sessions.bin", "w", true);
-    if (f) {
-        f.write((uint8_t*)&_sessRide,   2);
-        f.write((uint8_t*)&_sessCharge, 2);
-        f.close();
+    if (!f) {
+        // 2026-10-05 - F-7: this failure used to be silent, and the most likely cause of
+        // it is a FULL filesystem. The counters then roll back to their last saved value
+        // on the next boot and start handing out session numbers that already exist on
+        // disk — so the next session overwrites an old one. Worth a loud line.
+        Serial.println("[LABEL] saveSessions FAILED to open /sessions.bin - counters will "
+                       "ROLL BACK on next boot and filenames may collide (filesystem full?)");
+        return;
+    }
+    const size_t a = f.write((uint8_t*)&_sessRide,   2);
+    const size_t b = f.write((uint8_t*)&_sessCharge, 2);
+    f.close();
+    if (a != 2 || b != 2) {
+        Serial.printf("[LABEL] saveSessions SHORT WRITE (%u+%u of 4 bytes) - counters "
+                      "will roll back on next boot\n", (unsigned)a, (unsigned)b);
     }
 }
 
@@ -222,8 +233,34 @@ void labelStr(uint8_t port, char *buf, size_t len) {
 }
 
 // ── Session counters ──────────────────────────────────────────────────────────
-uint16_t sessRideNext()   { if (_sessRide   < 999) _sessRide++;   return _sessRide; }
-uint16_t sessChargeNext() { if (_sessCharge < 999) _sessCharge++; return _sessCharge; }
+// 2026-10-05 - F-3: cap raised 999 -> LOG_SESSION_MAX (9999). These counters CLAMP, they
+// do not wrap, and at the clamp two separate things broke:
+//   - every file in that stream read as session 999, which the free-space guard treats as
+//     "the session in progress" and therefore refuses to prune — so the stream became
+//     permanently unprunable and the filesystem filled anyway;
+//   - two sessions at the clamp on one day produced an IDENTICAL filename, and openFile()
+//     opens "w", truncating the earlier session to its header. In NOSYNC mode (no date in
+//     the name) that collision was unconditional, every session, every boot.
+// Warn well before the new cap so this is visible long before it bites again.
+static void _sessWarnNearMax(const char* which, uint16_t v) {
+    if (v >= LOG_SESSION_MAX - 10) {
+        Serial.printf("[LABEL] WARNING %s session counter at %u of %u - at the cap, "
+                      "filenames start colliding and logs stop being prunable\n",
+                      which, (unsigned)v, (unsigned)LOG_SESSION_MAX);
+    }
+}
+
+uint16_t sessRideNext() {
+    if (_sessRide < LOG_SESSION_MAX) _sessRide++;
+    _sessWarnNearMax("ride", _sessRide);
+    return _sessRide;
+}
+
+uint16_t sessChargeNext() {
+    if (_sessCharge < LOG_SESSION_MAX) _sessCharge++;
+    _sessWarnNearMax("charge", _sessCharge);
+    return _sessCharge;
+}
 
 // ── Filename builder ──────────────────────────────────────────────────────────
 void makeLogFilename(char *out, size_t outLen,

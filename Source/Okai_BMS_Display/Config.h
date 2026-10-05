@@ -37,9 +37,18 @@
 #define HEARTBEAT_INTERVAL_MS 1000UL
 
 // ─── Smart logging ───────────────────────────────────────────────────────────
-// Two streams: R_YYYYMMDD_NNN_S.csv (ride) and C_YYYYMMDD_NNN_S.csv (charge)
-// NNN = session counter (000-999, wraps), S = segment within session (1,2,3…)
-// Falls back to R_SXXX_S.csv / C_SXXX_S.csv when RTC has no time set
+// Two streams: Okai_RIDE_YYYYMMDD_NNN_S.csv and Okai_CHRG_YYYYMMDD_NNN_S.csv
+// NNN = session counter, S = segment within session (1,2,3…)
+// Falls back to Okai_RIDE_SNNN_S.csv / Okai_CHRG_SNNN_S.csv when RTC has no time set
+//
+// 2026-10-05 - The counter CLAMPS, it does not wrap; this comment used to say "wraps"
+// and was wrong. The cap was 999, which audit finding F-3 showed breaks two things at
+// once: every session-999 file looks like the session in progress (so the free-space
+// guard treats the whole stream as unprunable), and two session-999 rides on one day
+// produce the same filename, which `openFile()` opens "w" — truncating the earlier
+// session to a header. Raised to 9999. The format is "%03u", a MINIMUM width, so four
+// digits print in full and no filename is truncated.
+#define LOG_SESSION_MAX  9999
 #define LOG_RIDE_INTERVAL_MS    5000UL    // 5 s while riding
 #define LOG_CHARGE_INTERVAL_MS  30000UL   // 30 s while charging
 // 2026-07-26 - RAISED 1.0 -> 2.0 A. A pack sitting on the cheap scooter charger
@@ -74,6 +83,11 @@
 // for long; the next open picks up where it left off if that was not enough.
 #define LOG_FS_RESERVE_BYTES   524288UL  // keep 512 KB free — 2 full segments of room
 #define LOG_PRUNE_MAX_FILES    3         // max deletions in a single openFile() call
+// 2026-10-05 - Floor per audit finding F-4: never thin either stream below this many
+// files. Balancing by file count is deliberate and kept — rides are 5 s rows and are
+// most of the bytes, so thinning the larger stream is what frees space — but without a
+// floor a long run of one kind of session could evict the other stream entirely.
+#define LOG_PRUNE_KEEP_MIN     2         // always keep this many newest files per stream
 
 // ─── Pack labels ─────────────────────────────────────────────────────────────
 // Labels 1-8; 0 = unassigned (shows as P1/P2/P3/P4 in filenames)
@@ -110,6 +124,30 @@
 #define LABEL_SEED_VERSION   1
 #define LABEL_SEED_WINDOW_MS 120000UL   // seed only packs present in the first 2 min
 #define LABEL_SEED_LIST      { 1, 4, 6, 0 }   // ports 1-4; 0 = do not seed this port
+
+// 2026-10-05 - GATE 4, added after audit finding F-1. The three gates above stop the
+// seed REPEATING; none of them stopped it being CONFIDENTLY WRONG.
+//
+// WHAT WAS WRONG: the seed trusted `packRec[port].known`, and identification sets that
+// for the nearest record within PACK_CYC_MATCH_WINDOW whenever no runner-up is within
+// PACK_CYC_AMBIGUOUS. A battery whose own record is missing — deleted, or never written
+// because its first sighting was ambiguous — but which sits within 8 cycles of ANOTHER
+// pack's last-seen count is matched with no competition and therefore "confidently".
+// The seed would then write the owner's printed label into the wrong battery's file.
+// That is silent, permanent, survives reboots, and accrues wear history under the wrong
+// identity. The ambiguity gate only ever catches TWO records competing, never ONE wrong
+// record standing alone.
+//
+// This fleet's registration counts are 10-17 cycles apart, which looks safe, but
+// last-seen counts CONVERGE: a record left at 8229 that charges on to 8240 is then only
+// 6 cycles from the 8246 pack. The risk grows with use.
+//
+// SO: seeding additionally requires a TIGHT match — at most this much forward drift AND
+// an exact maxSoc agreement, or a brand-new registration (which cannot be wrong, the
+// record having just been created for the pack in front of us). A port that fails is
+// left unseeded and says so on serial; fix it with the picker, or plug the right pack in
+// and bump LABEL_SEED_VERSION.
+#define PACK_SEED_MAX_DRIFT  3   // max cycles since last seen that still allows a seed
 
 // ─── Cell health thresholds ──────────────────────────────────────────────────
 // 2026-07-26 - RAISED, and now only ever applied to a pack AT REST.
