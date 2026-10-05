@@ -47,15 +47,40 @@ confirmed on port 1 on 2026-07-26. Two readings three months apart, same port, s
 (`LABEL_SEED_LIST { 1, 4, 6, 0 }`, `Config.h`) writes these numbers into each pack's own registry
 record at the first boot after flashing, and prints one line per port as it does:
 
+#### ✅ Readout — first boot of `6d9bb7d`, 2026-10-05 (Mint bench, flashed mid-charge at 87 %)
+
+Verbatim from the serial capture (seconds since port open):
+
 ```
-[SEED] port1 CYC-0037 = #1 (owner's printed label)
-[SEED] port2 CYC-XXXX = #4 (owner's printed label)
-[SEED] port3 CYC-XXXX = #6 (owner's printed label)
+[   0.19] [SEED] ARMED v1: port1->#1 port2->#4 port3->#6 port4->#0, window 120 s
+[   1.06] [REG] port1 AMBIGUOUS cyc=55 (best +0, runner-up only 0 further) - asking owner
+[   1.06] [SEED] port1 not identified - NOT seeding; if the screen asks, answer #1
+[   1.61] [REG] port2 registered NEW pack: CYC-45  maxSoc=99%
+[   1.94] [SEED] port2 CYC-45 = #4 (owner's printed label)
+[   2.15] [REG] port3 AMBIGUOUS cyc=55 (best +0, runner-up only 0 further) - asking owner
+[   2.15] [SEED] port3 not identified - NOT seeding; if the screen asks, answer #6
+[   2.38] [REG] port1 ambiguity left unresolved by owner
 ```
 
-**Capture that serial output at the first boot after flashing and paste it here.** It is the
-authoritative `#N ↔ CYC` binding this document has been asking for since the 2026-07-18 action
-item at the bottom of the file, and it arrives without a single question to the owner.
+| Port | Label | CYC now | Outcome |
+|---|---|---|---|
+| 1 | **#1** | **55** | ⏳ Not seeded — two existing records both last-seen at 55 (drift +0 / +0). Assign **#1** via the picker |
+| 2 | **#4** | **45** | ✅ **#4 = CYC-45** — bound. Registered as a **new** record: no existing record was within 8 cycles |
+| 3 | **#6** | **55** | ⏳ Not seeded — same 55/55 collision. Assign **#6** via the picker |
+
+**#1 is now at CYC-55, not 37.** Consistent with the lock above: the counter drifts, +18 cycles
+since July. The locked *identity* (#1 is the pack that read CYC-37 in July) stands; only the count moved.
+
+**Open, from this readout:**
+- Two packs at an identical cycle count is the case fingerprinting cannot settle. Gate 4 refused both,
+  as designed — the old first-match code would have filed one pack's history under the other silently.
+- **#4 registering NEW** means either #4 never had a record, or its record sits more than 8 cycles
+  from 45. If the latter, #4 now has a split history. Check `/packs` on the dashboard.
+- **#6 (port 3) did not charge** — 62 % flat for the whole session, status byte `0x02` vs `0x2F` on
+  the others, and frames go QUIET for ~1.5 s ten times in 240 s while ports 1–2 never do.
+  Candidate for the known bad-BMS pack, or a port-3 charging fault.
+
+Full capture: `docs/bench-logs/2026-10-05-first-boot-6d9bb7d.log`.
 
 ### ⚠️ The CYC fingerprint DRIFTS — match with tolerance, not equality
 Pack #5 read **CYC-78** in May and **CYC-79** on 2026-07-27. **The fingerprint is a cycle counter, so it increments every time the pack is charged.** It is unique within the fleet only because the gaps between packs are large (37 · 54 · 65 · 78 · 8229 · 8246 · 8256).

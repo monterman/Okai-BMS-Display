@@ -1,0 +1,655 @@
+# Okai first boot after flashing 6d9bb7d (prebuilt/0.3.0-6d9bb7d) — Mint bench, 2026-10-05
+# esptool 5.4.0 write-flash, 4 regions hash-verified, no erase. Capture opened ~1 s after hard reset; ROM banner not captured.
+# Times are seconds since the port opened.
+[   0.00] ## opened /dev/ttyACM0
+[   0.06] [UART] 4 pack ports open
+[   0.12] [LOG] LittleFS ready  135168 / 10354688 bytes used
+[   0.12] [RTC] DS3231 not found — using flash-based time
+[   0.14] [TIME] restored from flash: 1791225084 (STALE — board-off time is unknown; open the dashboard to re-sync)
+[   0.16] [LABEL] labels: 0 0 0 0  rides: 101  charges: 50  synced: yes
+[   0.17] [REG] ready — /packs directory ensured
+[   0.19] [SEED] ARMED v1: port1->#1 port2->#4 port3->#6 port4->#0, window 120 s
+[   0.19] [DISP] WARNING: no PSRAM — canvas falls back to heap, WiFi may OOM
+[   0.81] [DISP] ready 320x170, 4 screens
+[   0.81] Okai BMS Display ready — 0.3.0
+[   1.06] [REG] port1 AMBIGUOUS cyc=55 (best +0, runner-up only 0 further) - asking owner
+[   1.06] [SEED] port1 not identified - NOT seeding; if the screen asks, answer #1
+[   1.61] [REG] saved /packs/CYC-0045.dat  cyc=45  Wh+0.0/0.0  sess=0
+[   1.61] [REG] port2 registered NEW pack: CYC-45  maxSoc=99%
+[   1.75] [REG] saved /packs/CYC-0045.dat  cyc=45  Wh+0.0/0.0  sess=0
+[   1.94] [SEED] port2 CYC-45 = #4 (owner's printed label)
+[   2.15] [REG] port3 AMBIGUOUS cyc=55 (best +0, runner-up only 0 further) - asking owner
+[   2.15] [SEED] port3 not identified - NOT seeding; if the screen asks, answer #6
+[   2.38] [LOG] opened /Okai_CHRG_20261005_051_1.csv
+[   2.38] [REG] port1 ambiguity left unresolved by owner
+[   2.40] [RX] pack1 SOC=87% V=40.62 CYC=55
+[   2.40] [RX] pack2 SOC=87% V=40.47 CYC=45
+[   2.40] [RX] pack3 SOC=62% V=38.09 CYC=55
+[   2.44] [PACK1] UP
+[   2.44] [PACK2] UP
+[   2.44] [PACK3] UP
+[   3.05] [DIAG] t=3s hb=3 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[   3.90] [PACK3] QUIET (no frame 1502 ms)
+[   4.14] [RX] pack1 SOC=87% V=40.62 CYC=55
+[   4.14] [RX] pack2 SOC=87% V=40.47 CYC=45
+[   4.14] [RX] pack3 SOC=62% V=38.09 CYC=55
+[   4.17] [PACK3] UP
+[   6.08] [DIAG] t=6s hb=7 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[   6.12] [RX] pack1 SOC=87% V=40.62 CYC=55
+[   6.12] [RX] pack2 SOC=87% V=40.47 CYC=45
+[   6.12] [RX] pack3 SOC=62% V=38.09 CYC=55
+[   7.14] [RX] pack1 SOC=87% V=40.62 CYC=55
+[   7.14] [RX] pack2 SOC=87% V=40.47 CYC=45
+[   7.14] [RX] pack3 SOC=62% V=38.09 CYC=55
+[   9.11] [DIAG] t=9s hb=10 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[   9.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[   9.11] [RX] pack2 SOC=87% V=40.47 CYC=45
+[   9.63] [PACK3] QUIET (no frame 1500 ms)
+[  10.14] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  10.14] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  10.14] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  10.17] [PACK3] UP
+[  12.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  12.11] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  12.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  12.15] [DIAG] t=12s hb=13 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[  13.14] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  13.14] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  13.14] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  15.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  15.11] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  15.18] [DIAG] t=15s hb=16 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  15.66] [PACK3] QUIET (no frame 1533 ms)
+[  16.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  16.13] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  16.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  16.17] [PACK3] UP
+[  18.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  18.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  18.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  18.18] [DIAG] t=18s hb=19 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  19.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  19.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  20.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  20.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  20.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  21.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  21.18] [DIAG] t=21s hb=22 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  22.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  22.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  22.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  23.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  23.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  23.14] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  24.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  24.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  24.18] [DIAG] t=24s hb=25 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  25.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  25.11] [RX] pack2 SOC=87% V=40.47 CYC=45
+[  26.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  26.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  27.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  27.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  27.18] [DIAG] t=27s hb=28 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  28.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  28.11] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  28.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  29.11] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  29.11] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  30.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  30.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  30.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  30.18] [DIAG] t=30s hb=31 maxgap=1017ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  31.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  32.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  32.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  33.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  33.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  33.18] [DIAG] t=33s hb=34 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  34.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  34.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  34.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  35.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  35.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  36.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  36.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  36.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  36.18] [DIAG] t=36s hb=37 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  37.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  37.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  38.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  38.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  38.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  39.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  39.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  39.18] [DIAG] t=39s hb=40 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  40.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  40.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  40.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  41.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  41.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  42.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  42.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  42.18] [DIAG] t=42s hb=43 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  43.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  43.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  44.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  44.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  45.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  45.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  45.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  45.18] [DIAG] t=45s hb=46 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  46.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  47.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  47.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  47.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  48.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  48.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  48.18] [DIAG] t=48s hb=49 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  49.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  49.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  50.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  50.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  51.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  51.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  51.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  51.18] [DIAG] t=51s hb=52 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  52.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  52.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  53.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  53.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  53.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  54.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  54.18] [DIAG] t=54s hb=55 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  55.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  55.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  56.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  56.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  57.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  57.18] [DIAG] t=57s hb=58 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  58.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  58.13] [RX] pack1 SOC=87% V=40.62 CYC=55
+[  58.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  59.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  60.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  60.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  60.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  60.18] [DIAG] t=60s hb=61 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  61.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  61.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  61.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  62.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  62.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  62.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  63.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  63.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  63.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  63.18] [DIAG] t=63s hb=64 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  64.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  64.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  64.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  65.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  65.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  65.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  66.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  66.13] [RX] pack2 SOC=87% V=40.48 CYC=45
+[  66.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  66.18] [DIAG] t=66s hb=67 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  67.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  67.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  67.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  68.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  68.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  68.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  69.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  69.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  69.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  69.18] [DIAG] t=69s hb=70 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  70.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  70.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  70.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  71.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  71.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  71.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  72.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  72.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  72.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  72.18] [DIAG] t=72s hb=73 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  73.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  73.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  73.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  74.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  74.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  74.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  75.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  75.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  75.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  75.18] [DIAG] t=75s hb=76 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  76.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  76.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  76.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  77.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  77.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  77.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  78.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  78.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  78.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  78.18] [DIAG] t=78s hb=79 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  79.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  79.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  79.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  80.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  80.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  80.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  81.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  81.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  81.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  81.18] [DIAG] t=81s hb=82 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  82.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  82.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  82.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  83.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  83.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  83.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  84.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  84.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  84.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  84.18] [DIAG] t=84s hb=85 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  85.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  85.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  85.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  86.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  86.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  86.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  87.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  87.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  87.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  87.18] [DIAG] t=87s hb=88 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  88.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  88.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  88.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  89.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  89.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  89.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  90.18] [DIAG] t=90s hb=91 maxgap=1001ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  90.63] [PACK3] QUIET (no frame 1503 ms)
+[  91.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  91.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  91.13] [PACK3] UP
+[  91.14] [RX] pack1 SOC=87% V=40.64 CYC=55
+[  92.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  93.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  93.14] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  93.18] [DIAG] t=93s hb=94 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[  94.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  94.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  95.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  95.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  95.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  96.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  96.18] [DIAG] t=96s hb=97 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[  97.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  97.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  97.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[  99.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[  99.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[  99.18] [DIAG] t=99s hb=100 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[  99.63] [PACK3] QUIET (no frame 1500 ms)
+[ 100.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 100.13] [PACK3] UP
+[ 101.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[ 101.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 101.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 102.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 102.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 102.18] [DIAG] t=102s hb=103 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 103.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 103.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 104.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 104.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 105.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 105.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 105.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 105.18] [DIAG] t=105s hb=106 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 107.13] [RX] pack1 SOC=87% V=40.63 CYC=55
+[ 107.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 107.63] [PACK3] QUIET (no frame 1500 ms)
+[ 108.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 108.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 108.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 108.13] [PACK3] UP
+[ 108.18] [DIAG] t=108s hb=109 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 109.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 109.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 109.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 110.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 110.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 111.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 111.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 111.18] [DIAG] t=111s hb=112 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 112.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 113.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 113.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 114.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 114.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 114.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 114.18] [DIAG] t=114s hb=115 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 115.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 116.13] [RX] pack2 SOC=87% V=40.49 CYC=45
+[ 116.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 117.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 117.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 117.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 117.18] [DIAG] t=117s hb=118 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 118.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 118.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 118.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 119.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 119.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 120.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 120.18] [DIAG] t=120s hb=121 maxgap=1001ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 121.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 121.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 121.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 122.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 122.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 122.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 123.18] [DIAG] t=123s hb=124 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 124.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 124.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 124.14] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 125.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 125.14] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 125.63] [PACK3] QUIET (no frame 1500 ms)
+[ 126.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 126.13] [PACK3] UP
+[ 126.18] [DIAG] t=126s hb=127 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 127.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 127.14] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 128.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 129.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 129.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 129.14] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 129.18] [DIAG] t=129s hb=130 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 130.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 131.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 131.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 131.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 132.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 132.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 132.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 132.18] [DIAG] t=132s hb=133 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 133.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 133.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 134.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 134.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 135.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 135.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 135.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 135.18] [DIAG] t=135s hb=136 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 136.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 136.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 137.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 137.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 137.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 138.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 138.18] [DIAG] t=138s hb=139 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 139.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 139.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 140.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 141.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 141.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 141.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 141.18] [DIAG] t=141s hb=142 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 142.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 142.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 142.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 143.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 143.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 144.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 144.13] [RX] pack2 SOC=87% V=40.50 CYC=45
+[ 144.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 144.18] [DIAG] t=144s hb=145 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 145.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 146.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 146.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 146.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 147.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 147.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 147.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 147.18] [DIAG] t=147s hb=148 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 148.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 148.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 149.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 149.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 149.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 150.18] [DIAG] t=150s hb=151 maxgap=1001ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 151.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 151.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 151.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 152.13] [RX] pack1 SOC=87% V=40.64 CYC=55
+[ 152.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 152.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 153.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 153.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 153.18] [DIAG] t=153s hb=154 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 154.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 154.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 154.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 155.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 155.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 155.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 156.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 156.18] [DIAG] t=156s hb=157 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 157.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 157.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 157.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 158.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 158.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 159.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 159.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 159.18] [DIAG] t=159s hb=160 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 160.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 160.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 160.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 161.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 161.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 161.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 162.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 162.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 162.18] [DIAG] t=162s hb=163 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 163.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 163.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 163.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 164.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 165.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 165.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 165.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 165.18] [DIAG] t=165s hb=166 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 166.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 166.13] [RX] pack2 SOC=88% V=40.50 CYC=45
+[ 166.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 167.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 167.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 168.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 168.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 168.18] [DIAG] t=168s hb=169 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 169.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 169.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 170.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 170.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 170.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 171.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 171.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 171.18] [DIAG] t=171s hb=172 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 172.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 172.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 173.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 173.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 174.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 174.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 174.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 174.18] [DIAG] t=174s hb=175 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 175.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 175.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 176.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 176.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 176.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 177.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 177.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 177.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 177.18] [DIAG] t=177s hb=178 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 178.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 179.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 179.13] [RX] pack1 SOC=87% V=40.65 CYC=55
+[ 180.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 180.18] [DIAG] t=180s hb=181 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 180.63] [PACK3] QUIET (no frame 1500 ms)
+[ 181.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 181.13] [PACK3] UP
+[ 181.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 182.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 182.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 183.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 183.18] [DIAG] t=183s hb=184 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 184.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 184.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 184.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 185.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 185.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 186.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 186.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 186.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 186.18] [DIAG] t=186s hb=187 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 187.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 187.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 188.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 189.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 189.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 189.18] [DIAG] t=189s hb=190 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 190.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 190.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 190.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 191.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 191.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 192.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 192.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 192.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 192.18] [DIAG] t=192s hb=193 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 193.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 194.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 194.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 194.16] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 195.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 195.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 195.18] [DIAG] t=195s hb=196 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 196.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 196.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 197.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 197.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 197.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 198.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 198.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 198.18] [DIAG] t=198s hb=199 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 199.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 200.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 200.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 200.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 201.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 201.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 201.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 201.18] [DIAG] t=201s hb=202 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 202.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 203.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 203.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 203.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 204.18] [DIAG] t=204s hb=205 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 205.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 205.13] [RX] pack1 SOC=88% V=40.65 CYC=55
+[ 205.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 206.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 206.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 207.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 207.18] [DIAG] t=207s hb=208 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 208.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 208.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 208.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 209.13] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 209.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 210.20] [DIAG] t=210s hb=211 maxgap=1001ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 210.20] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 210.21] [RX] pack2 SOC=88% V=40.51 CYC=45
+[ 210.63] [PACK3] QUIET (no frame 1500 ms)
+[ 211.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 211.13] [PACK3] UP
+[ 212.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 212.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 212.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 213.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 213.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 213.20] [DIAG] t=213s hb=214 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 214.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 214.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 215.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 216.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 216.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 216.16] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 216.20] [DIAG] t=216s hb=217 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 217.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 217.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 217.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 218.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 218.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 219.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 219.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 219.20] [DIAG] t=219s hb=220 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 220.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 221.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 221.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 221.16] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 222.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 222.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 222.20] [DIAG] t=222s hb=223 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 223.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 223.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 223.63] [PACK3] QUIET (no frame 1500 ms)
+[ 224.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 224.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 224.13] [PACK3] UP
+[ 225.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 226.13] [DIAG] t=225s hb=226 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 226.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 226.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 227.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 227.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 228.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 228.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 228.20] [DIAG] t=228s hb=229 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 229.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 229.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 230.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 230.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 230.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 231.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 231.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 231.20] [DIAG] t=231s hb=232 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 232.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 232.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 233.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 233.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 233.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 234.13] [RX] pack1 SOC=88% V=40.66 CYC=55
+[ 234.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 234.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 234.20] [DIAG] t=234s hb=235 maxgap=1000ms vbat=4.92V wifi=off | p1=# p2=# p3=# p4=-
+[ 236.13] [RX] pack1 SOC=88% V=40.67 CYC=55
+[ 236.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 236.16] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 237.20] [DIAG] t=237s hb=238 maxgap=1000ms vbat=4.93V wifi=off | p1=# p2=# p3=# p4=-
+[ 238.13] [RX] pack1 SOC=88% V=40.67 CYC=55
+[ 238.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 238.13] [RX] pack3 SOC=62% V=38.09 CYC=55
+[ 239.13] [RX] pack1 SOC=88% V=40.67 CYC=55
+[ 239.13] [RX] pack2 SOC=88% V=40.52 CYC=45
+[ 240.20] [DIAG] t=240s hb
+[ 240.20] ## capture finished
