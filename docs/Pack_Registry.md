@@ -86,6 +86,47 @@ since July. The locked *identity* (#1 is the pack that read CYC-37 in July) stan
 
 Full capture: `docs/bench-logs/2026-10-05-first-boot-6d9bb7d.log`.
 
+### 🔴 2026-10-06 — owner's visual read, and it CONTRADICTS the label the firmware wrote
+
+Owner confirmed all four ports visually. Cycle counts are frame byte `[11]` from the 14:54 dumps
+(two dumps agree):
+
+| Port | Owner's label | Cycles |
+|---|---|---|
+| 1 | **#1** | 56 |
+| 2 | **#6** | 45 |
+| 3 | **#7** | 21 |
+| 4 | **#4** | 56 |
+
+**The seeded label is WRONG.** On 2026-10-05 the owner read port 2 as **#4**, and the one-shot seed
+wrote `label=4` into the 45-cycle record (`CYC-45`). The 45-cycle pack has been in port 2 on both
+days — so the pack is the same and only the reading changed. **Today's read says that pack is #6.**
+The same inversion appears on the other side: the 56-cycle pack was called **#6** yesterday (on
+port 3) and **#4** today (on port 4).
+
+> **What this proves, and it is worth being precise about.** Gate 4 did its job — it refused every
+> match it could not make tightly, and it never attached a label to a pack it had mis-identified.
+> What defeated it was a **human reading that inverted between two days**. No firmware gate can
+> protect against that. It is the strongest possible argument that the rebuild must be driven by the
+> markers on the batteries at the moment of assignment, and that the display must show the number
+> back so it can be checked against the sticker.
+
+**Consequences to carry into the rebuild:**
+
+- `CYC-45` currently carries `label=4` and must become **#6**.
+- **#4 is a 56-cycle pack**, and `CYC-45` is not it. Whatever record ends up holding #4 must be the
+  56-cycle pack in port 4.
+- **Ports 1 and 4 BOTH read 56 cycles** (#1 and #4). That is a fresh collision between two
+  *labelled* packs, and port 4 is currently unidentified — ambiguous between `CYC-0044` and
+  `CYC-0054`, both at 55 with drift 1, exactly as designed.
+- A second filename collision was observed live today: a new record took the `CYC-0055` filename and
+  overwrote the old file. Harmless this once (the casualty was a `maxSoc=0` junk record) but that is
+  **twice in two days**, in the field.
+
+**Still outstanding:** a direct marker read on the packs in ports 2 and 4, which is the single point
+where yesterday and today disagree. Until that is in hand, treat the table above as the owner's
+latest word rather than as reconciled.
+
 ### ⚠️ The CYC fingerprint DRIFTS — match with tolerance, not equality
 Pack #5 read **CYC-78** in May and **CYC-79** on 2026-07-27. **The fingerprint is a cycle counter, so it increments every time the pack is charged.** It is unique within the fleet only because the gaps between packs are large (37 · 54 · 65 · 78 · 8229 · 8246 · 8256).
 
