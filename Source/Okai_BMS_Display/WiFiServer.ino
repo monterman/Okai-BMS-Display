@@ -205,10 +205,14 @@ static void _wifiStartAuto() {
 // Called once from setup(). Separate from wifiToggle() so a boot attempt is never mistaken
 // for a manual one: _userForcedOff stays clear, so the charge-time retry still works even if
 // this attempt finds nothing.
+// R-2: do NOT join from setup(). A reset mid-ride would raise the radio exactly where
+// SOP-038 forbids it, and mid-session reboots are PROVEN on this unit. Arm a request here
+// and let wifiServerLoop() honour it once it can see whether a ride is in progress.
+static bool _bootJoinPending = false;
 void wifiStartBoot() {
-    _userForcedOff = false;
-    _staRetryAt    = 0;
-    _wifiStartAuto();
+    _userForcedOff    = false;
+    _staRetryAt       = 0;
+    _bootJoinPending  = true;
 }
 
 // OkaiBMS instances are in UART.ino
@@ -808,14 +812,32 @@ void wifiServerLoop() {
     // The window closes. The ONLY outcome that shuts WiFi down is "no network and no
     // charge" - i.e. presumed riding, which is exactly when the keep-alive matters and a
     // radio does not. Every success re-arms the window, so a connected board stays up.
+    // R-2: a station link must NOT hold the radio up through a whole ride. SOP-038 says
+    // never while riding, and that is the one condition the rule exists for.
+    const bool riding = (logCurrentMode() == LOG_RIDE);
+    if (riding && _wst != WST_OFF && !charging) {
+        Serial.println("[WiFi] RIDE detected - shutting WiFi down (SOP-038)");
+        _wifiAllDown();
+    }
     if (_wst != WST_OFF && (now - _wstSince) > WIFI_ON_WINDOW_MS) {
-        if (_wst == WST_STATION || charging) {
+        if ((_wst == WST_STATION && !riding) || charging) {
             _wstSince = now;
         } else {
             Serial.printf("[WiFi] %lu s window closed, no network and no charge - "
                           "shutting down (presumed riding)\n",
                           (unsigned long)(WIFI_ON_WINDOW_MS / 1000UL));
             _wifiAllDown();
+        }
+    }
+
+    // The deferred boot join. Waits for the logger to have decided a mode, then goes -
+    // unless a ride is already running, in which case it is dropped entirely.
+    if (_bootJoinPending && now > 4000UL) {
+        _bootJoinPending = false;
+        if (riding) {
+            Serial.println("[WiFi] boot join SKIPPED - a ride is already in progress");
+        } else {
+            _wifiStartAuto();
         }
     }
 

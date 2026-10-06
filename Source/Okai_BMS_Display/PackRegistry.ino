@@ -266,6 +266,9 @@ static uint8_t _nextFreeAutoNum() {
 #define DEDUPE_MAX_VICTIMS 4
 static void _dedupeNumberByPath(const char* keep, uint8_t n) {
     if (!fsReady || !n || n > NUM_LABELS) return;
+    // An empty keep would make the filter match everything INCLUDING the record we were
+    // asked to protect, stripping the number just assigned. Not reachable today; one line.
+    if (!keep || !keep[0]) return;
 
     char keepPath[40] = {0};
     if (keep && keep[0]) snprintf(keepPath, sizeof(keepPath), "%s", keep);
@@ -565,8 +568,8 @@ void packRegistrySetLabel(uint8_t port, uint8_t label) {
     // so simply revealing it again can resurrect the duplicate this whole change removes.
     if (label == 0) {
         bool taken[NUM_LABELS + 1];
-        char self[40]; _cycFilename(self, sizeof(self), packRec[port].regCYC);
-        _collectTakenNumbers(taken, self);
+        // R-7: exclude the file this port actually holds, not a derived name.
+        _collectTakenNumbers(taken, packRec[port].file);
         if (!packRec[port].autoNum || taken[packRec[port].autoNum])
             packRec[port].autoNum = _lowestFree(taken);
         _saveRecord(port);
@@ -707,10 +710,15 @@ void packRegistryIdentify(uint8_t port) {
     // armed it also mislabels — port 1 writes label 1, port 2 overwrites it with label 4
     // in that same file, and _dedupeNumber finds no victim because the file it would
     // have to fix is the one it is told to keep.
+    // R-6: compare the file the other port ACTUALLY HOLDS. This used to derive a name
+    // from regCYC, which the new _2 filenames make wrong: a port holding
+    // /packs/CYC-0056_2.dat derives CYC-0056.dat, the comparison misses, and BOTH ports
+    // load and write one record - re-opening the very clobber this delta set out to fix.
+    // Ports 1 and 4 both read 56 cycles today, so the fleet is already in the state that
+    // produces _2 files.
     for (uint8_t q = 0; q < NUM_PACKS; q++) {
-        if (q == port || !packRec[q].known) continue;
-        char other[40]; _cycFilename(other, sizeof(other), packRec[q].regCYC);
-        if (strcmp(other, bestPath) == 0) {
+        if (q == port || !packRec[q].known || !packRec[q].file[0]) continue;
+        if (strcmp(packRec[q].file, bestPath) == 0) {
             packRec[port].known         = false;
             packRec[port].ambiguous     = true;
             packRec[port].currentCycles = curCyc;
@@ -753,6 +761,16 @@ void packRegistryRegister(uint8_t port) {
         for (uint8_t n = 2; n < 10; n++) {
             char cand[28];
             snprintf(cand, sizeof(cand), "/packs/CYC-%04u_%u.dat", (unsigned)r.regCYC, n);
+            if (n == 9 && LittleFS.exists(cand)) {
+                // R-9: exhaustion used to fall through with r.file still set to the base
+                // name, which EXISTS - so _saveRecordOf opened it "w" and truncated it.
+                // The original clobber, silently. Refuse to register instead.
+                Serial.printf("[REG] CANNOT REGISTER: 9 records already share CYC-%04u. "
+                              "Delete a stale record from the dashboard first.%s",
+                              (unsigned)r.regCYC, "\n");
+                r.known = false;
+                return;
+            }
             if (!LittleFS.exists(cand)) {
                 Serial.printf("[REG] %s is taken by another pack - registering as %s "
                               "instead (no record overwritten)\n", r.file, cand);
@@ -861,7 +879,14 @@ uint8_t packRegistryList(char* out, size_t outLen, const char* csrf) {
                 int8_t onPort = -1;
                 for (uint8_t q = 0; q < NUM_PACKS; q++)
                     if (packRec[q].known && strcmp(packRec[q].file, path) == 0) onPort = (int8_t)q;
-                char row[420];
+                // R-5: was row[420]. The format string alone is ~381 literal chars,
+                // leaving 39 for 13 substitutions when the path is 19-21 and the token 8.
+                // Every row overflowed, and because snprintf's return is the UNTRUNCATED
+                // length it was then used as a memcpy size - an out-of-bounds stack read
+                // into the served page, and truncation landing inside the closing
+                // </form></td></tr>, which dropped the forms and broke the admin UI this
+                // whole route exists for.
+                char row[640];
                 int n = snprintf(row, sizeof(row),
                     "<tr><td>%s</td><td>%u</td><td>%u</td><td>%s</td><td>%u</td><td>%u</td>"
                     "<td>%.1f</td><td>%.1f</td><td>%s</td>"
@@ -877,6 +902,7 @@ uint8_t packRegistryList(char* out, size_t outLen, const char* csrf) {
                     (onPort >= 0) ? "IN USE" : "-",
                     csrf, path, (unsigned)NUM_LABELS,
                     (unsigned)(r.label ? r.label : r.autoNum));
+                if (n >= (int)sizeof(row)) n = (int)sizeof(row) - 1;   // clamp before use
                 if (n > 0 && used + (size_t)n + 1 < outLen) {
                     memcpy(out + used, row, (size_t)n);
                     used += (size_t)n;
@@ -907,6 +933,14 @@ bool packRegistrySetLabelByFile(const char* file, uint8_t label) {
     PackRecord r;
     if (!_loadRecordInto(r, file)) return false;
     r.label = label;
+    // R-8: clearing an override has to re-check the autoNum underneath it, exactly as the
+    // device path does. Otherwise it reveals a number another pack has since taken, or -
+    // on a legacy record whose autoNum is 0 - leaves the pack with no number at all.
+    if (label == 0) {
+        bool taken[NUM_LABELS + 1];
+        _collectTakenNumbers(taken, file);
+        if (!r.autoNum || taken[r.autoNum]) r.autoNum = _lowestFree(taken);
+    }
     _saveRecordOf(r);
     // Keep a live port's RAM copy coherent, or the screen keeps the old number until the
     // pack is re-seated.

@@ -1266,9 +1266,17 @@ void displayLoop() {
     if (b1 == LOW && _b1Prev == HIGH) _b1Ts = now;
     if (_b1Prev == LOW && b1 == HIGH) {
         uint32_t held = now - _b1Ts;
+        // R-3: WiFi used to toggle on a BARE SHORT PRESS, and the station join now blocks
+        // loop() for up to 15 s. A 100-400 ms water glitch on BTN1 would therefore freeze
+        // pack reads, logging, LEDs and button sampling mid-ride. A deliberate hold cannot
+        // be produced by a glitch, and sits clear of the 4 s sleep arm.
+        #define WIFI_TOGGLE_HOLD_MS 1500UL
         if (held >= DEBOUNCE_MS && held < SLEEP_HOLD_MS) {
-            if (_screen == 0)      wifiToggle();
-            else if (_screen == 1) _detailPack = nextConnectedPack(_detailPack);  // cycle connected packs only
+            if (_screen == 1 && held < WIFI_TOGGLE_HOLD_MS) {
+                _detailPack = nextConnectedPack(_detailPack);   // cycle connected packs
+            } else if (_screen == 0 && held >= WIFI_TOGGLE_HOLD_MS) {
+                wifiToggle();
+            }
         }
     }
     _b1Prev = b1;
