@@ -599,6 +599,38 @@ static void handlePacks() {
         h += row;
     }
     h += F("</table>");
+
+    // ── EVERY STORED RECORD, including packs that are not plugged in.
+    // The table above only ever showed the four live ports (packRegGet is port-indexed),
+    // which is why the registry had to be read by decoding raw flash to find out that four
+    // records all claimed 55 cycles.
+    h += F("<h2>Stored records</h2>"
+           "<table><tr><th>CYC ID</th><th>regCYC</th><th>last seen</th><th>first seen</th>"
+           "<th>auto</th><th>label</th><th>Wh in</th><th>Wh out</th><th>port</th>"
+           "<th>number / delete</th></tr>");
+    {
+        static char rows[3600];
+        uint8_t n = packRegistryList(rows, sizeof(rows), _csrfToken);
+        h += rows;
+        h += F("</table>");
+        char note[200];
+        snprintf(note, sizeof(note),
+                 "<p class='dim'>%u stored record(s). \"IN USE\" rows are held by a live "
+                 "port and cannot be deleted - unplug the pack first.</p>", (unsigned)n);
+        h += note;
+    }
+
+    // Registry bankruptcy. Deliberately a typed confirmation rather than a one-tap button.
+    h += F("<form method='POST' action='/packwipe' style='margin:18px 0'>"
+           "<input type='hidden' name='_t' value='");
+    h += _csrfToken;
+    h += F("'><p class='dim'>Wipe every stored record and rebuild from the markers on the "
+           "batteries. Use this when the stored history can no longer be trusted - type "
+           "WIPE to confirm.</p>"
+           "<input name='confirm' placeholder='type WIPE' style='width:9em'> "
+           "<button style='background:#8b1a1a;color:#fff;border:0;padding:8px 14px;"
+           "border-radius:4px'>Wipe registry</button></form>");
+
     h += F("<p><a href='/'>&#8592; Back to dashboard</a></p></body></html>");
     _srv.send(200, "text/html", h);
 }
@@ -682,6 +714,50 @@ static void handleWifiSetup() {
     _srv.send(200, "text/html", body);
 }
 
+// ── Route: /packedit ─────────────────────────────────────────────────────────
+// Set a label on, or delete, ONE stored record. This is what the registry rebuild runs on:
+// before it existed the only way to see stored records was decoding raw flash, and the only
+// way to remove one was writing a flash image back.
+static void handlePackEdit() {
+    if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+        _srv.send(403, "text/plain", "Forbidden");
+        return;
+    }
+    String f = _srv.arg("f");
+    String a = _srv.arg("a");
+    bool ok = false;
+    if (a == "del") {
+        ok = packRegistryForget(f.c_str());
+    } else if (a == "set") {
+        ok = packRegistrySetLabelByFile(f.c_str(), (uint8_t)_srv.arg("l").toInt());
+    }
+    _srv.sendHeader("Location", "/packs");
+    _srv.send(302, "text/plain", ok ? "OK" : "Refused (in use, or bad request)");
+}
+
+// ── Route: /packwipe ─────────────────────────────────────────────────────────
+// Registry bankruptcy in one button. Needed because currentCycles was re-anchored across
+// packs by the old matcher, so stored wear history is BLENDED between batteries rather than
+// merely mislabelled — repairing it would leave numbers that look authoritative and are not.
+static void handlePackWipe() {
+    if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken) ||
+        _srv.arg("confirm") != "WIPE") {
+        _srv.send(403, "text/plain",
+                  "Forbidden - needs the CSRF token and confirm=WIPE");
+        return;
+    }
+    uint8_t gone = packRegistryForgetAll();
+    char body[320];
+    snprintf(body, sizeof(body),
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Registry wiped</title>"
+        "<style>body{background:#0d1117;color:#e0e0e0;font-family:sans-serif;padding:20px}"
+        "a{color:#4af}</style></head><body><h2>%u record(s) deleted</h2>"
+        "<p>Now plug the packs in ONE AT A TIME and set each number from the marker on the "
+        "battery. Records held by a live port were skipped.</p>"
+        "<p><a href='/packs'>&larr; registry</a></p></body></html>", (unsigned)gone);
+    _srv.send(200, "text/html", body);
+}
+
 void wifiServerInit() {
     snprintf(_csrfToken, sizeof(_csrfToken), "%08x", (unsigned)esp_random());
     wifiNetsLoad();
@@ -699,7 +775,9 @@ void wifiServerInit() {
     _srv.on("/delete",   handleDelete);
     _srv.on("/clearall", handleClearAll);
     _srv.on("/rawdump",  handleRawDump);
-    _srv.on("/packs",   handlePacks);
+    _srv.on("/packs",    handlePacks);
+    _srv.on("/packedit", handlePackEdit);
+    _srv.on("/packwipe", handlePackWipe);
     _srv.onNotFound(handleNotFound);
 }
 

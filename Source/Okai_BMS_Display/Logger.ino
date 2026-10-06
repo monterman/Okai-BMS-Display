@@ -85,6 +85,51 @@ extern volatile uint32_t g_hbCount;   // Heartbeat.ino — total keep-alives sen
 const char *loggerActiveFile() { return _fileOpen ? _curFileName : ""; }
 
 // ── Mode detection ────────────────────────────────────────────────────────────
+// 2026-10-06 - Warn when a charger is connected and no current is flowing. See Config.h
+// § CHG_STALLED_WARN_MS: this exact state ran for 2 h 12 min on pack #1 in silence.
+// Written into the CSV as well as serial, so the condition is visible in the data where
+// the 2.2-hour hole already is.
+static uint32_t _chgStallSince[NUM_PACKS] = {0};
+static bool     _chgStallWarned[NUM_PACKS] = {false};
+
+static void checkChargerStalled() {
+    const uint32_t now = millis();
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        const bool present = packs[i].valid && packs[i].chargerDetected;
+        const bool flowing = present && (packs[i].current > 0.2f);
+        if (!present || flowing) {
+            if (_chgStallWarned[i])
+                Serial.printf("[CHG] port%u charging now - stall cleared\n", i + 1);
+            _chgStallSince[i]  = 0;
+            _chgStallWarned[i] = false;
+            continue;
+        }
+        if (_chgStallSince[i] == 0) { _chgStallSince[i] = now; continue; }
+        if (!_chgStallWarned[i] && (now - _chgStallSince[i]) > CHG_STALLED_WARN_MS) {
+            _chgStallWarned[i] = true;
+            char lbl[6]; labelStr(i, lbl, sizeof(lbl));
+            Serial.printf("[CHG] *** port%u (L%s) CHARGER CONNECTED BUT NOT CHARGING for "
+                          "%lu min - status 0x%02X, %.2fV. Suspect the charge port, its "
+                          "contacts, or the charge FET. ***\n",
+                          i + 1, lbl, (unsigned long)((now - _chgStallSince[i]) / 60000UL),
+                          (unsigned)packs[i].rawStatus, packs[i].voltage);
+            if (_fileOpen) {
+                char line[160];
+                int n = snprintf(line, sizeof(line),
+                        "#### CHARGER STALLED  up=%lus port=%u L%s %lumin 0.00A "
+                        "status=0x%02X %.2fV SOC=%u%%",
+                        (unsigned long)(now / 1000), (unsigned)(i + 1), lbl,
+                        (unsigned long)((now - _chgStallSince[i]) / 60000UL),
+                        (unsigned)packs[i].rawStatus, packs[i].voltage,
+                        (unsigned)packs[i].soc);
+                _logFile.println(line);
+                _fileSizeBytes += (uint32_t)(n + 1);
+                checkpointFile();
+            }
+        }
+    }
+}
+
 static LogMode detectMode() {
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (packs[i].valid && packs[i].chargerDetected) return LOG_CHARGE;
@@ -509,6 +554,7 @@ void loggerLoop() {
     // of being rounded to the next sample. Cost when nothing changed: NUM_PACKS bool
     // compares. Nothing here touches the Core-1 keep-alive task.
     if (_fileOpen) writePackEdges();
+    checkChargerStalled();
 
     if (millis() - _lastLogMs < modeInterval()) return;
     _lastLogMs = millis();

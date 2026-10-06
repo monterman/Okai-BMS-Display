@@ -442,7 +442,10 @@ static float packChargeMins(uint8_t p) {
         // old, the exact inverse of the discharge path's drop. Uses the SLOW ring: on a
         // 4.5 h charge the fast discharge ring sees ~1 % and would just read noise.
         float    rise = (float)_chgRing[_chgCount-1].soc[p] - (float)_chgRing[0].soc[p];
-        if (span >= CHG_MIN_SPAN_MS && rise > 0.05f)
+        // 2026-10-06 - Require at least TWO SOC ticks. SOC is 1%-quantised, so one tick is a
+        // slope with ~100% uncertainty: the owner saw "8 hours" built from 1% in 13 min on a
+        // charge that was really ~3.7 h out. Two ticks halves the quantisation error.
+        if (span >= CHG_MIN_SPAN_MS && rise >= 2.0f)
             socMins = (100.0f - socNow) / (rise / (span / 60000.0f));
     }
 
@@ -453,7 +456,13 @@ static float packChargeMins(uint8_t p) {
     // during the 5 min slope warm-up, produces a confident ~47 min estimate for a charge
     // that actually takes ~4.5 h — and then poisons the 50/50 blend afterwards.
     if (fabsf(amps - 8.224f) < 0.05f) amps = 0.0f;
-    if (amps > 0.2f && packs[p].capacityMah > 0)
+    // 2026-10-06 - PLAUSIBILITY GATE. Byte [20] decodes as capacity x 200 mAh, and the real
+    // pack measures ~12.7 Ah (0.854 A for 6% over 53 min), matching a byte of 64. But across
+    // this fleet it reads 0, 0, 4, 4 - i.e. 0 mAh or 800 mAh, both impossible for a 10S4P.
+    // With 800 mAh the current path returns ~23 min for a pack hours from full, and the
+    // 50/50 blend below only halves that error. A capacity we do not believe is worse than
+    // none, because the SOC slope on its own is sound.
+    if (amps > 0.2f && packs[p].capacityMah >= PACK_CAPACITY_MIN_MAH)
         curMins = ((100.0f - socNow) / 100.0f * (float)packs[p].capacityMah)
                   / (amps * 1000.0f) * 60.0f;
 
@@ -1111,6 +1120,8 @@ void displayInit() {
 //      timer brings it home.
 static void enforceHomePolicy(uint32_t now) {
     if (_showLabelPick && (now - _overlayShownMs) > OVERLAY_TIMEOUT_MS) {
+        Serial.printf("[DISP] picker TIMED OUT port%u after %lu s (no change)\n",
+                      _labelPickPort + 1, (unsigned long)(OVERLAY_TIMEOUT_MS / 1000UL));
         _showLabelPick = false;
         _dispLast      = 0;
     }
@@ -1121,6 +1132,7 @@ static void enforceHomePolicy(uint32_t now) {
 }
 
 // Open the label picker for a specific port, pre-filled with its current number.
+#define PICKER_GRACE_MS 400UL   // ignore button edges for this long after the picker opens
 static void openLabelPicker(uint8_t port, uint32_t now) {
     if (port >= NUM_PACKS) return;
     _showLabelPick  = true;
@@ -1128,6 +1140,15 @@ static void openLabelPicker(uint8_t port, uint32_t now) {
     _labelPickVal   = labelGet(port);
     _overlayShownMs = now;
     _dispLast       = 0;
+    // 2026-10-06 - Force a genuine release-then-press. The picker used to honour the button
+    // state from BEFORE it opened, so one leftover or noisy edge confirmed the pre-filled
+    // "--" and burned the single prompt for that pack. Reproduced 2/2 boots on 2026-10-05:
+    // port 1 logged "ambiguity left unresolved by owner" 1.3 s after asking with nobody
+    // touching the device. Seeding prev=LOW means a press is only seen after the pin has
+    // gone high again.
+    _b1Prev = _b2Prev = _b3Prev = LOW;
+    Serial.printf("[DISP] label picker OPEN for port%u (pre-filled #%u)\n",
+                  port + 1, (unsigned)_labelPickVal);
 }
 
 void displayLoop() {
@@ -1187,18 +1208,23 @@ void displayLoop() {
 
     // ── Overlay: label picker
     if (_showLabelPick) {
-        if (_b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
+        // Nothing counts during the grace window - see openLabelPicker().
+        const bool pickReady = (now - _overlayShownMs) > PICKER_GRACE_MS;
+        if (pickReady && _b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
             _b1Ts = now;
             _labelPickVal = (_labelPickVal >= NUM_LABELS) ? 0 : _labelPickVal + 1;
         }
-        if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
+        if (pickReady && _b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS) {
             _b2Ts = now;
+            Serial.printf("[DISP] picker CONFIRM port%u = #%u\n",
+                          _labelPickPort + 1, (unsigned)_labelPickVal);
             labelSet(_labelPickPort, _labelPickVal);
             _showLabelPick = false;
             _dispLast = 0;  // force immediate full redraw on dismiss
         }
-        if (_b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
+        if (pickReady && _b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
             _b3Ts = now;
+            Serial.printf("[DISP] picker DISMISSED port%u (no change)\n", _labelPickPort + 1);
             _showLabelPick = false;
             _dispLast = 0;
         }

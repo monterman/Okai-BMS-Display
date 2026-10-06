@@ -128,6 +128,9 @@ static bool _loadRecordInto(PackRecord& r, const char* path) {
 
     snprintf(r.cycID, sizeof(r.cycID), "CYC-%u", (unsigned)r.regCYC);
     r.known = (r.regCYC > 0);
+    // Remember the file we actually came from, so a later save cannot be redirected onto
+    // some other pack's record by filename derivation. See PackRecord::file.
+    snprintf(r.file, sizeof(r.file), "%s", path);
 
     free(buf);
     return r.known;
@@ -141,7 +144,12 @@ static void _saveRecordOf(PackRecord& r) {
     if (!fsReady) return;
     if (!r.known) return;
 
-    char path[32]; _cycFilename(path, sizeof(path), r.regCYC);
+    // Write where this record LIVES, never where its regCYC says it would live. Legacy
+    // records loaded before file[] existed fall back to the derivation, which is correct
+    // for them: they are already at the derived name.
+    char path[32];
+    if (r.file[0]) snprintf(path, sizeof(path), "%s", r.file);
+    else           _cycFilename(path, sizeof(path), r.regCYC);
     File f = LittleFS.open(path, "w", true);
     if (!f) {
         Serial.printf("[REG] save failed: %s\n", path);
@@ -256,12 +264,11 @@ static uint8_t _nextFreeAutoNum() {
 // the loser's label and giving it a fresh autoNum, so no record is ever deleted and no
 // wear history is lost — only the displayed number moves.
 #define DEDUPE_MAX_VICTIMS 4
-static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
+static void _dedupeNumberByPath(const char* keep, uint8_t n) {
     if (!fsReady || !n || n > NUM_LABELS) return;
 
     char keepPath[40] = {0};
-    if (keepPort < NUM_PACKS && packRec[keepPort].known)
-        _cycFilename(keepPath, sizeof(keepPath), packRec[keepPort].regCYC);
+    if (keep && keep[0]) snprintf(keepPath, sizeof(keepPath), "%s", keep);
 
     // Collect the victims first. Rewriting records inside the directory walk would be
     // mutating the directory that the open iterator is still reading.
@@ -317,9 +324,13 @@ static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
         // Keep a live port's RAM copy coherent — the duplicate may be plugged in right
         // now, in which case the screen would otherwise keep showing the old number
         // until the next re-identification.
+        // Match on the FILE, not on regCYC: two packs can legitimately share a cycle
+        // count (ports 1 and 4 both read 56 on 2026-10-06), so regCYC no longer
+        // identifies a record. The file does.
         for (uint8_t q = 0; q < NUM_PACKS; q++) {
-            if (q == keepPort || !packRec[q].known) continue;
-            if (packRec[q].regCYC == tmp.regCYC) {
+            if (!packRec[q].known || !packRec[q].file[0]) continue;
+            if (strcmp(packRec[q].file, keepPath) == 0) continue;   // never the kept one
+            if (strcmp(packRec[q].file, victims[v]) == 0) {
                 packRec[q].label   = 0;
                 packRec[q].autoNum = fresh;
             }
@@ -338,6 +349,14 @@ static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
                           (unsigned)n, victims[v], (unsigned)NUM_LABELS);
         }
     }
+}
+
+// Port-indexed convenience. The record a port holds knows its own filename now, so this no
+// longer derives one — deriving is what let two packs share a file.
+static void _dedupeNumber(uint8_t keepPort, uint8_t n) {
+    const char* keep = (keepPort < NUM_PACKS && packRec[keepPort].known)
+                       ? packRec[keepPort].file : nullptr;
+    _dedupeNumberByPath(keep, n);
 }
 
 // ── One-shot label seed ───────────────────────────────────────────────────────
@@ -727,6 +746,21 @@ void packRegistryRegister(uint8_t port) {
 
     r.regCYC       = packs[port].cycles;
     r.maxSocAtReg  = packs[port].maxSoc;
+    // Claim a filename nothing is using. Plain CYC-NNNN.dat if free, else _2, _3...
+    // This is the fix for the clobber: a new pack can no longer land on an existing file.
+    _cycFilename(r.file, sizeof(r.file), r.regCYC);
+    if (fsReady && LittleFS.exists(r.file)) {
+        for (uint8_t n = 2; n < 10; n++) {
+            char cand[28];
+            snprintf(cand, sizeof(cand), "/packs/CYC-%04u_%u.dat", (unsigned)r.regCYC, n);
+            if (!LittleFS.exists(cand)) {
+                Serial.printf("[REG] %s is taken by another pack - registering as %s "
+                              "instead (no record overwritten)\n", r.file, cand);
+                snprintf(r.file, sizeof(r.file), "%s", cand);
+                break;
+            }
+        }
+    }
     r.currentCycles = r.regCYC;
     r.sessions     = 0;
     r.historyLen   = 0;
@@ -790,6 +824,122 @@ void packRegistrySessionUpdate(uint8_t port) {
 
     r.sessions++;
     _saveRecord(port);
+}
+
+// ── Stored-record admin (web) ────────────────────────────────────────────────
+// Operates on records by FILENAME, because a record for a pack that is not plugged in has
+// no port and its regCYC is not unique (ports 1 and 4 both read 56 cycles on 2026-10-06).
+
+// Guard every path: only files we own, inside /packs, and no traversal.
+static bool _validRecPath(const char* f) {
+    return f && strncmp(f, "/packs/CYC-", 11) == 0 && !strstr(f, "..") &&
+           strlen(f) < 28 && strcmp(f + strlen(f) - 4, ".dat") == 0;
+}
+
+// Refuse to touch a record a live port is holding — it would be written straight back.
+static bool _heldByPort(const char* f) {
+    for (uint8_t q = 0; q < NUM_PACKS; q++)
+        if (packRec[q].known && packRec[q].file[0] && strcmp(packRec[q].file, f) == 0)
+            return true;
+    return false;
+}
+
+uint8_t packRegistryList(char* out, size_t outLen, const char* csrf) {
+    out[0] = '\0';
+    if (!fsReady) return 0;
+    size_t  used  = 0;
+    uint8_t count = 0;
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f) {
+            char path[40];
+            snprintf(path, sizeof(path), "/packs/%s", f.name());
+            f.close();
+            PackRecord r;
+            if (_loadRecordInto(r, path)) {
+                int8_t onPort = -1;
+                for (uint8_t q = 0; q < NUM_PACKS; q++)
+                    if (packRec[q].known && strcmp(packRec[q].file, path) == 0) onPort = (int8_t)q;
+                char row[420];
+                int n = snprintf(row, sizeof(row),
+                    "<tr><td>%s</td><td>%u</td><td>%u</td><td>%s</td><td>%u</td><td>%u</td>"
+                    "<td>%.1f</td><td>%.1f</td><td>%s</td>"
+                    "<td><form method='POST' action='/packedit'>"
+                    "<input type='hidden' name='_t' value='%s'>"
+                    "<input type='hidden' name='f' value='%s'>"
+                    "<input name='l' type='number' min='0' max='%u' value='%u' style='width:4em'>"
+                    "<button name='a' value='set'>set</button>"
+                    "<button name='a' value='del'>delete</button></form></td></tr>",
+                    r.cycID, (unsigned)r.regCYC, (unsigned)r.currentCycles, r.firstSeen,
+                    (unsigned)r.autoNum, (unsigned)r.label,
+                    r.totalWhCharged, r.totalWhDischarged,
+                    (onPort >= 0) ? "IN USE" : "-",
+                    csrf, path, (unsigned)NUM_LABELS,
+                    (unsigned)(r.label ? r.label : r.autoNum));
+                if (n > 0 && used + (size_t)n + 1 < outLen) {
+                    memcpy(out + used, row, (size_t)n);
+                    used += (size_t)n;
+                    out[used] = '\0';
+                }
+                count++;
+            }
+            f = dir.openNextFile();
+        }
+    }
+    if (dir) dir.close();
+    return count;
+}
+
+bool packRegistryForget(const char* file) {
+    if (!fsReady || !_validRecPath(file)) return false;
+    if (_heldByPort(file)) {
+        Serial.printf("[REG] refusing to delete %s - a live port holds it\n", file);
+        return false;
+    }
+    bool ok = LittleFS.remove(file);
+    Serial.printf("[REG] %s %s\n", ok ? "DELETED" : "failed to delete", file);
+    return ok;
+}
+
+bool packRegistrySetLabelByFile(const char* file, uint8_t label) {
+    if (!fsReady || !_validRecPath(file) || label > NUM_LABELS) return false;
+    PackRecord r;
+    if (!_loadRecordInto(r, file)) return false;
+    r.label = label;
+    _saveRecordOf(r);
+    // Keep a live port's RAM copy coherent, or the screen keeps the old number until the
+    // pack is re-seated.
+    for (uint8_t q = 0; q < NUM_PACKS; q++)
+        if (packRec[q].known && strcmp(packRec[q].file, file) == 0) packRec[q].label = label;
+    if (label) _dedupeNumberByPath(file, label);   // keep THIS record, renumber others
+    Serial.printf("[REG] %s label set to #%u via web\n", file, (unsigned)label);
+    return true;
+}
+
+uint8_t packRegistryForgetAll(void) {
+    if (!fsReady) return 0;
+    // Collect first, delete after closing the directory: removing inside an openNextFile()
+    // walk kills the walk, which is the bug that made the dashboard's old "Delete all"
+    // stop after one file.
+    char   victims[12][40];
+    uint8_t nv = 0;
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f && nv < 12) {
+            snprintf(victims[nv], sizeof(victims[0]), "/packs/%s", f.name());
+            f.close();
+            if (!_heldByPort(victims[nv])) nv++;
+            f = dir.openNextFile();
+        }
+        if (f) f.close();
+    }
+    if (dir) dir.close();
+    uint8_t gone = 0;
+    for (uint8_t i = 0; i < nv; i++) if (LittleFS.remove(victims[i])) gone++;
+    Serial.printf("[REG] WIPED %u stored record(s) - rebuild from the markers now\n", gone);
+    return gone;
 }
 
 const PackRecord* packRegGet(uint8_t port) {

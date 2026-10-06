@@ -149,6 +149,20 @@
 // and bump LABEL_SEED_VERSION.
 #define PACK_SEED_MAX_DRIFT  3   // max cycles since last seen that still allows a seed
 
+// 2026-10-06 - Minimum capacity the charge estimator will believe. A 10S4P Okai pack
+// measures ~12.7 Ah (0.854 A for 6% SOC over 53 min on 2026-10-06), which matches frame
+// byte [20] = 64 under the x200 mAh decode. But this fleet reports 0, 0, 4, 4 - 0 mAh or
+// 800 mAh - so the field is not reliably capacity. Below this floor the estimator ignores
+// it and uses the SOC slope alone, which is the sound signal anyway.
+#define PACK_CAPACITY_MIN_MAH 5000
+
+// 2026-10-06 - CHARGER CONNECTED BUT NOTHING HAPPENING.
+// Pack #1 sat with a charger detected and +0.000 A for TWO HOURS AND TWELVE MINUTES on
+// 2026-10-06 (log 065, 814 rows of nothing) and the firmware never said a word. The status
+// bits named the fault the whole time: charger detected set, charger-OK clear, charge FET
+// never closing. Five minutes of that is diagnosable; two hours is wasted.
+#define CHG_STALLED_WARN_MS  300000UL   // charger present, no current, this long -> warn
+
 // ─── Cell health thresholds ──────────────────────────────────────────────────
 // 2026-07-26 - RAISED, and now only ever applied to a pack AT REST.
 //
@@ -366,6 +380,18 @@ struct PackData {
 
 // ─── Per-pack registry record ─────────────────────────────────────────────────
 struct PackRecord {
+    // 2026-10-06 - THE RECORD CARRIES ITS OWN PATH. Previously the filename was derived
+    // from regCYC alone and opened "w", so registering a pack whose CURRENT cycle count
+    // equalled some older record's REGISTRATION count silently truncated that record.
+    // It destroyed CYC-0020 (17 sessions, 10 history entries) on 2026-10-05 when pack #7
+    // went on port 4 reading 20 cycles, and fired again on 2026-10-06 overwriting
+    // CYC-0055. Twice in two days, no error logged either time.
+    //
+    // Derivation cannot be made safe — two packs legitimately share a cycle count (ports 1
+    // and 4 both read 56 right now). So registration allocates a filename that does not
+    // exist yet and the record remembers it. Empty means "derive it", which is what every
+    // pre-2026-10-06 record on disk will do when first loaded.
+    char     file[28];                         // "/packs/CYC-0055_2.dat" + NUL
     uint16_t regCYC;                           // cycle count at registration (UUID)
     uint8_t  maxSocAtReg;                      // maxSoc at registration (tiebreaker)
     // ── Identity shown to the human ──────────────────────────────────────────
@@ -475,3 +501,10 @@ void packRegistrySessionUpdate(uint8_t port);
 void packRegistrySetLabel(uint8_t port, uint8_t label);  // manual override, pack-bound
 uint8_t packRegistryNumber(uint8_t port);                // override ?: autoNum, 0 = unknown
 const PackRecord* packRegGet(uint8_t port);
+// 2026-10-06 - Stored-record admin, added because the registry had to be read by decoding
+// raw flash with littlefs-python: no route or command could list records for packs that
+// were not plugged in. The rebuild needs a real delete, not a flash write-back.
+uint8_t packRegistryList(char* out, size_t outLen, const char* csrf);  // <tr> rows; returns count
+bool    packRegistryForget(const char* file);            // delete ONE stored record
+bool    packRegistrySetLabelByFile(const char* file, uint8_t label);
+uint8_t packRegistryForgetAll(void);                     // wipe /packs, returns files removed
