@@ -25,6 +25,11 @@ void setup() {
   packRegistryInit(); // ensures /packs dir, ready to identify packs
   displayInit();
   wifiServerInit();
+  // 2026-10-06 - Owner's spec: "turn it off and on, and that should make it connect to
+  // the network easily" - no button, no opening the box. Tries the stored networks,
+  // falls back to its own AP, stays reachable for WIFI_ON_WINDOW_MS, and only shuts
+  // down if nothing answered AND no charge is running - i.e. he is out riding.
+  wifiStartBoot();
 
   Serial.println("Okai BMS Display ready — " FW_VERSION);
 }

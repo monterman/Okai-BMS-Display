@@ -46,8 +46,23 @@ void powerManagerLoop() {
         if (sPm_downMs == 0) sPm_downMs = now;
         uint32_t held = now - sPm_downMs;
 
+        // 2026-10-06 - REFUSE TO SLEEP ON A BUTTON WE NO LONGER TRUST. Closes Rex's K-2,
+        // graded CRITICAL and latching: deep sleep halts the keep-alive, and the packs stop
+        // OUTPUTTING POWER five seconds later, so a water-bridged BTN1 could stop the buggy
+        // and leave it stopped. sPm_armed already blocked the shorted-from-boot case; this
+        // blocks the bridge that appears later and holds. Nobody holds a button for 15 s,
+        // so treating that as a fault costs the rider nothing.
         if (held >= SLEEP_HOLD_MS) {
-            doSleep();  // does not return
+            if (btnIsStuck(0)) {
+                static uint32_t lastGripe = 0;
+                if (now - lastGripe > 10000UL) {
+                    lastGripe = now;
+                    Serial.println("[PWR] sleep REFUSED - BTN1 is stuck low, not held. "
+                                   "Sleeping would stop the keep-alive and cut traction power.");
+                }
+            } else {
+                doSleep();  // does not return
+            }
         }
 
         if (held >= OVERLAY_START_MS &&

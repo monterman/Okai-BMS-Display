@@ -15,10 +15,201 @@
 #include <WebServer.h>
 #include <LittleFS.h>
 
-bool wifiActive = false;
+#include <Preferences.h>
+#include <ESPmDNS.h>
+#include <WiFiMulti.h>
+#include <esp_mac.h>      // esp_read_mac / ESP_MAC_WIFI_STA — see _wifiStartAP()
+
+bool wifiActive = false;                // true whenever the dashboard is reachable (STA or AP)
 static WebServer _srv(80);
 static char      _csrfToken[9] = {0};   // HIGH-1: per-boot random token
 extern bool fsReady;
+
+// ── Station mode state ────────────────────────────────────────────────────────
+// See Config.h § "Station mode" for why this exists and why it never runs while riding.
+// Credentials are in NVS only; they are never written to source and they survive a flash.
+enum WifiState : uint8_t {
+    WST_OFF = 0,
+    WST_STATION,   // on the home network
+    WST_AP         // SoftAP fallback, or no credentials stored
+};
+static WifiState _wst          = WST_OFF;
+static uint32_t  _wstSince     = 0;      // when we entered JOINING
+static uint32_t  _staRetryAt   = 0;      // do not re-attempt a failed join before this
+static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
+static bool      _mdnsUp       = false;
+// 2026-10-06 - A LIST of networks, not one, and WiFiMulti to choose between them.
+// Ported from foilIQ's WifiXfer.ino, which already solves this on the owner's own hardware.
+// WiFiMulti scans and joins the STRONGEST stored network actually in range and carries
+// per-network failover itself — which is exactly the garage-is-far-from-the-house case.
+typedef struct { char ssid[33]; char pass[65]; } WifiNet;
+static WifiNet      _nets[WIFI_MAX_NETS];
+static uint8_t      _netCount = 0;
+static WiFiMulti    _multi;
+static char         _apSsid[24] = {0};
+
+static void wifiNetsLoad() {
+    Preferences p;
+    _netCount = 0;
+    if (!p.begin("okaiwifi", true)) return;        // absent namespace is normal on a new board
+    for (uint8_t i = 0; i < WIFI_MAX_NETS; i++) {
+        char k[8];
+        snprintf(k, sizeof(k), "ssid%u", i);
+        String s = p.getString(k, "");
+        if (!s.length()) continue;
+        snprintf(k, sizeof(k), "pass%u", i);
+        String q = p.getString(k, "");
+        snprintf(_nets[_netCount].ssid, sizeof(_nets[0].ssid), "%s", s.c_str());
+        snprintf(_nets[_netCount].pass, sizeof(_nets[0].pass), "%s", q.c_str());
+        _netCount++;
+    }
+    p.end();
+}
+
+static bool wifiNetsSave() {
+    Preferences p;
+    if (!p.begin("okaiwifi", false)) return false;
+    for (uint8_t i = 0; i < WIFI_MAX_NETS; i++) {
+        char k[8];
+        snprintf(k, sizeof(k), "ssid%u", i);
+        if (i < _netCount) p.putString(k, _nets[i].ssid); else p.remove(k);
+        snprintf(k, sizeof(k), "pass%u", i);
+        if (i < _netCount) p.putString(k, _nets[i].pass); else p.remove(k);
+    }
+    p.end();
+    return true;
+}
+
+// Add, or update the password of an SSID already stored. Oldest entry is dropped when full.
+static bool wifiNetAdd(const char* ssid, const char* pass) {
+    uint8_t slot = _netCount;
+    for (uint8_t i = 0; i < _netCount; i++)
+        if (strcmp(_nets[i].ssid, ssid) == 0) { slot = i; break; }
+    if (slot == WIFI_MAX_NETS) {                   // full: drop the oldest
+        memmove(&_nets[0], &_nets[1], (WIFI_MAX_NETS - 1) * sizeof(WifiNet));
+        slot = WIFI_MAX_NETS - 1;
+        _netCount = WIFI_MAX_NETS;
+    } else if (slot == _netCount) {
+        _netCount++;
+    }
+    snprintf(_nets[slot].ssid, sizeof(_nets[0].ssid), "%s", ssid);
+    snprintf(_nets[slot].pass, sizeof(_nets[0].pass), "%s", pass);
+    return wifiNetsSave();
+}
+
+bool wifiHasCreds() { return _netCount > 0; }
+
+// What the header and the diag line should say.
+const char* wifiStateStr() {
+    switch (_wst) {
+        case WST_STATION: return "STA";
+        case WST_AP:      return "AP";
+        default:          return "off";
+    }
+}
+
+static void _mdnsStart() {
+    if (_mdnsUp) return;
+    if (MDNS.begin(WIFI_MDNS_NAME)) {
+        MDNS.addService("http", "tcp", 80);
+        _mdnsUp = true;
+        Serial.printf("[WiFi] mDNS up — http://%s.local\n", WIFI_MDNS_NAME);
+    }
+}
+
+static void _serverUp() {
+    if (!wifiActive) { _srv.begin(); wifiActive = true; }
+    _mdnsStart();
+}
+
+static void _wifiAllDown() {
+    if (wifiActive) _srv.stop();
+    MDNS.end();
+    _mdnsUp = false;
+    WiFi.softAPdisconnect(true);
+    WiFi.disconnect(true, false);        // drop the association, keep NVS creds
+    WiFi.mode(WIFI_OFF);
+    wifiActive = false;
+    _wst = WST_OFF;
+}
+
+static void _wifiStartAP() {
+    WiFi.mode(WIFI_AP);
+    // esp_read_mac(), NOT WiFi.macAddress(). foilIQ hit this: asked right after a mode switch,
+    // before the interface is up, the driver returns an unset address and every board
+    // advertises the same name. esp_read_mac() reads the factory value out of efuse and is
+    // valid whatever state the radio is in.
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(_apSsid, sizeof(_apSsid), "%s-%02X%02X%02X",
+             WIFI_AP_SSID, mac[3], mac[4], mac[5]);
+    WiFi.softAP(_apSsid, WIFI_AP_PASSWORD);        // WPA2, never open — the AP exposes every log
+    _wst = WST_AP;
+    _serverUp();
+    Serial.printf("[WiFi] AP on  SSID=%s  IP=%s\n",
+                  _apSsid, WiFi.softAPIP().toString().c_str());
+}
+
+// ── Station attempt — SEQUENTIAL, never concurrent with the AP ────────────────
+// Why not AP+STA at the same time, which was the obvious-looking design: WIFI_MODE_APSTA
+// allocates both control blocks, and Espressif's own docs and issue tracker put station
+// mode alone at ~45 kB of heap with APSTA "a lot of RAM". This board has NO PSRAM, so the
+// ~106 kB framebuffer already sits in internal DRAM, and an out-of-memory reboot is exactly
+// Rex's K-7 — a reboot stops the keep-alive. foilIQ avoids APSTA for the same reason and has
+// been proven in the field. One radio at a time.
+//
+// `_multi.run()` BLOCKS for up to the budget. That is acceptable and deliberate: the
+// keep-alive is a Core-1 priority-18 task so it keeps beating throughout, and the only cost
+// is that pack reads and the display pause. At boot there is nothing to log yet; on a
+// charge-start attempt the sample interval is 30 s, so at worst one row is late.
+static bool _wifiTryStation() {
+    if (_netCount == 0) {
+        Serial.println("[WiFi] no stored networks — going straight to AP");
+        return false;
+    }
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    // TWO naming mechanisms, because one is not enough — foilIQ's note, and it is right:
+    //   setHostname() is the DHCP client name, so the ROUTER learns it. That makes a bare
+    //     "okai" resolve (or okai.lan / okai.home depending on the router) and shows a
+    //     readable name in the client list instead of an anonymous MAC. It MUST be set
+    //     before the association, which is why it is here and not after run().
+    //   mDNS (started in _mdnsStart) answers okai.local, which Windows and Apple resolve
+    //     natively and Android frequently does not.
+    WiFi.setHostname(WIFI_MDNS_NAME);
+    _multi.APlistClean();
+    for (uint8_t i = 0; i < _netCount; i++)
+        _multi.addAP(_nets[i].ssid, _nets[i].pass[0] ? _nets[i].pass : nullptr);
+
+    Serial.printf("[WiFi] scanning for %u known network(s), %lu ms budget...\n",
+                  _netCount, (unsigned long)WIFI_STA_CONNECT_MS);
+    if (_multi.run(WIFI_STA_CONNECT_MS) == WL_CONNECTED) {
+        _wst = WST_STATION;
+        _serverUp();
+        Serial.printf("[WiFi] joined \"%s\"  IP=%s  http://%s.local  RSSI=%d dBm\n",
+                      WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
+                      WIFI_MDNS_NAME, WiFi.RSSI());
+        return true;
+    }
+    Serial.println("[WiFi] no known network answered — falling back to AP");
+    WiFi.disconnect(true);
+    return false;
+}
+
+// Try the home network, fall back to the AP. Used at boot, at charge start, and by BTN1.
+static void _wifiStartAuto() {
+    _wstSince = millis();
+    if (!_wifiTryStation()) _wifiStartAP();
+}
+
+// Called once from setup(). Separate from wifiToggle() so a boot attempt is never mistaken
+// for a manual one: _userForcedOff stays clear, so the charge-time retry still works even if
+// this attempt finds nothing.
+void wifiStartBoot() {
+    _userForcedOff = false;
+    _staRetryAt    = 0;
+    _wifiStartAuto();
+}
 
 // OkaiBMS instances are in UART.ino
 #include "OkaiBMS.h"
@@ -417,8 +608,91 @@ static void handleNotFound() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+// ── Route: /wifi ──────────────────────────────────────────────────────────────
+// Enter the home network ONCE, from the AP. Stored in NVS, never in source control,
+// and it survives a firmware flash. The password field is write-only: the form shows
+// whether one is stored, never what it is.
+static void handleWifiSetup() {
+    if (_srv.hasArg("ssid")) {
+        if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+            _srv.send(403, "text/plain", "Forbidden");
+            return;
+        }
+        String ssid = _srv.arg("ssid");
+        String pass = _srv.arg("pass");
+        if (ssid.length() == 0 || ssid.length() > 32 || pass.length() > 64) {
+            _srv.send(400, "text/plain", "SSID 1-32 chars, password up to 64");
+            return;
+        }
+        if (!wifiNetAdd(ssid.c_str(), pass.c_str())) {
+            _srv.send(500, "text/plain", "Could not write to NVS");
+            return;
+        }
+        Serial.printf("[WiFi] credentials stored for \"%s\" — joining now\n", ssid.c_str());
+        _srv.send(200, "text/html",
+                  "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Saved</title>"
+                  "<style>body{background:#0d1117;color:#e0e0e0;font-family:sans-serif;"
+                  "padding:20px}a{color:#4af}</style></head><body>"
+                  "<h2>Network saved</h2>"
+                  "<p>Switching off the access point and joining it now. This page will go "
+                  "away &mdash; that is the point.</p>"
+                  "<p>From now on reach the display at <b>http://" WIFI_MDNS_NAME ".local</b> "
+                  "on your home network. It comes up by itself whenever a charge starts.</p>"
+                  "<p class='dim'>If the join fails it falls back to this access point.</p>"
+                  "</body></html>");
+        _srv.client().flush();
+        delay(250);                      // let the response leave before the radio flips
+        _wifiAllDown();
+        _userForcedOff = false;
+        _staRetryAt    = 0;
+        _wifiStartAuto();
+        return;
+    }
+
+    char body[1400];
+    snprintf(body, sizeof(body),
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>WiFi Setup</title><style>body{background:#0d1117;color:#e0e0e0;"
+        "font-family:sans-serif;padding:16px;max-width:520px}h2{color:#4af}"
+        "input{width:100%%;padding:10px;margin:6px 0 14px;background:#161b22;color:#e0e0e0;"
+        "border:1px solid #333;border-radius:4px;font-size:16px}"
+        "button{padding:12px 20px;background:#1f6feb;color:#fff;border:0;border-radius:4px;"
+        "font-size:16px}.dim{color:#888;font-size:13px}a{color:#4af}</style></head><body>"
+        "<h2>Join a home network</h2>"
+        "<p class='dim'>Current state: <b>%s</b>%s%s</p>"
+        "<form method='POST' action='/wifi'>"
+        "<input type='hidden' name='_t' value='%s'>"
+        "<label>Network name (SSID)</label>"
+        "<input name='ssid' maxlength='32' value='%s' required>"
+        "<label>Password</label>"
+        "<input name='pass' type='password' maxlength='64' placeholder='%s'>"
+        "<button type='submit'>Save and join</button></form>"
+        "<p class='dim'>Stored in the chip's NVS, not in the firmware, so it is never in "
+        "source control and it survives a flash. Afterwards the display reaches the network "
+        "by itself whenever a charge starts, and answers at "
+        "<b>http://" WIFI_MDNS_NAME ".local</b>. It never joins while you are riding.</p>"
+        "<p><a href='/'>&larr; dashboard</a></p></body></html>",
+        wifiStateStr(),
+        (_wst == WST_STATION) ? " &mdash; IP " : "",
+        (_wst == WST_STATION) ? WiFi.localIP().toString().c_str() : "",
+        _csrfToken,
+        _netCount ? _nets[0].ssid : "",
+        _netCount ? "unchanged (stored)" : "none stored");
+    _srv.send(200, "text/html", body);
+}
+
 void wifiServerInit() {
     snprintf(_csrfToken, sizeof(_csrfToken), "%08x", (unsigned)esp_random());
+    wifiNetsLoad();
+    if (wifiHasCreds()) {
+        Serial.printf("[WiFi] %u stored network(s):", _netCount);
+        for (uint8_t i = 0; i < _netCount; i++) Serial.printf(" \"%s\"", _nets[i].ssid);
+        Serial.println();
+    } else {
+        Serial.println("[WiFi] no stored network — AP will come up; add one at /wifi");
+    }
+    _srv.on("/wifi",     handleWifiSetup);
     _srv.on("/",         handleRoot);
     _srv.on("/settime",  handleSetTime);
     _srv.on("/csv",      handleCsv);
@@ -430,20 +704,60 @@ void wifiServerInit() {
 }
 
 void wifiServerLoop() {
+    const uint32_t now      = millis();
+    const bool     charging = (logCurrentMode() == LOG_CHARGE);
+
+    // Lost the home network. RETRY it rather than give up: the owner's case is a garage at
+    // the edge of coverage, where a drop is normal and a reconnect is what he expects.
+    if (_wst == WST_STATION && WiFi.status() != WL_CONNECTED) {
+        Serial.println("[WiFi] station link LOST - will retry");
+        if (wifiActive) { _srv.stop(); wifiActive = false; }
+        MDNS.end(); _mdnsUp = false;
+        _wst        = WST_OFF;
+        _staRetryAt = now + WIFI_STA_RETRY_MS;
+    }
+
+    // Keep trying for as long as a charge is running. Charging is stationary, mains-powered
+    // and off the water, so WiFi stays up for the whole charge - the owner's rule. Riding is
+    // the opposite case and is excluded on purpose (SOP-038). A manual BTN1 off is respected.
+    if (_wst == WST_OFF && !_userForcedOff && charging && wifiHasCreds() &&
+        (int32_t)(now - _staRetryAt) >= 0) {
+        Serial.println("[WiFi] charging - (re)trying the home network");
+        _staRetryAt = now + WIFI_STA_RETRY_MS;
+        _wifiStartAuto();
+    }
+
+    // The window closes. The ONLY outcome that shuts WiFi down is "no network and no
+    // charge" - i.e. presumed riding, which is exactly when the keep-alive matters and a
+    // radio does not. Every success re-arms the window, so a connected board stays up.
+    if (_wst != WST_OFF && (now - _wstSince) > WIFI_ON_WINDOW_MS) {
+        if (_wst == WST_STATION || charging) {
+            _wstSince = now;
+        } else {
+            Serial.printf("[WiFi] %lu s window closed, no network and no charge - "
+                          "shutting down (presumed riding)\n",
+                          (unsigned long)(WIFI_ON_WINDOW_MS / 1000UL));
+            _wifiAllDown();
+        }
+    }
+
     if (wifiActive) _srv.handleClient();
 }
 
+// BTN1. Cycles: off → station (or AP if no credentials stored) → off.
 void wifiToggle() {
-    if (wifiActive) {
-        _srv.stop();
-        WiFi.softAPdisconnect(true);
-        wifiActive = false;
-        Serial.println("[WiFi] AP off");
+    if (_wst != WST_OFF) {
+        _wifiAllDown();
+        _userForcedOff = true;          // do not let auto-on undo a deliberate off
+        Serial.println("[WiFi] off (manual)");
     } else {
-        WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
-        _srv.begin();
-        wifiActive = true;
-        Serial.printf("[WiFi] AP on  SSID=%s  IP=%s\n",
-                      WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+        _userForcedOff = false;
+        if (wifiHasCreds()) {
+            _wifiStartAuto();
+        } else {
+            Serial.println("[WiFi] no stored network — starting AP. "
+                           "Open http://192.168.4.1/wifi to add one.");
+            _wifiStartAP();
+        }
     }
 }

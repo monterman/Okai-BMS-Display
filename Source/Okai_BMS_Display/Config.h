@@ -279,6 +279,38 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 #define WIFI_AP_SSID     "OkaiBMS"
 #define WIFI_AP_PASSWORD "12345678"
 
+// ─── Station mode (join the home network) ────────────────────────────────────
+// 2026-10-06 - WHY THIS EXISTS, in the owner's words: "I'm tired of doing that.
+// This should be on the network so you can actually go in and check it while it's
+// charging, instead of having to connect to it via AP."
+//
+// He is right, and the cost of not having it was concrete: pack #1's charge state was
+// diagnosed from a 15-hour-old dump because that was the only data available, and the
+// diagnosis was wrong. Live logs are not a convenience, they are what stops stale
+// analysis.
+//
+// 🔴 CREDENTIALS ARE NEVER STORED HERE. The AP password above sits in source control
+// already, which is tolerable for a throwaway bench AP and absolutely not for a home
+// network. Station credentials live in NVS only, entered once through the /wifi page on
+// the AP. Nothing to commit, nothing to leak, and they survive a firmware flash.
+//
+// 🔴 NEVER WHILE RIDING. Per [[SOP-038]] the keep-alive outranks every feature here, and
+// riding is the one time a dropout matters. Charging is stationary, mains-powered and off
+// the water, so auto-join is gated to CHARGE sessions only. Evidence this is safe: four
+// WiFi-load windows (AP up, two clients, ~250 HTTP requests, one sustained 15 min) all
+// held the keep-alive at a worst gap of 1026 ms against a 5000 ms deadline, with no
+// out-of-memory reboot. Station mode is a different load profile, so it still needs its
+// own g_hbMaxGap proof before it is trusted.
+// Ported from foilIQ's proven WifiXfer pattern. SEQUENTIAL, never AP+STA concurrently:
+// APSTA allocates both control blocks, and Espressif put station mode alone at ~45 kB of
+// heap with APSTA "a lot of RAM". No PSRAM here and a ~106 kB framebuffer already in
+// internal DRAM, so an OOM reboot - which stops the keep-alive - is the real risk.
+#define WIFI_MAX_NETS         4        // a LIST of networks; WiFiMulti joins the strongest
+#define WIFI_STA_CONNECT_MS   15000UL  // scan+join budget before falling back to AP
+#define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router
+#define WIFI_ON_WINDOW_MS     60000UL  // owner's spec: 60 s reachable after every power-on
+#define WIFI_MDNS_NAME        "okai"   // http://okai.local, and the router learns "okai"
+
 // ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
 #define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated
 #define PACK_NOMINAL_V   36.0f    // 10S × 3.6 V nominal

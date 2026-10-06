@@ -45,6 +45,48 @@ static float    gLocalBatV  = 0.0f;     // onboard 18650 voltage (GPIO4 ADC × 2
 // ── Button debounce ───────────────────────────────────────────────────────────
 static bool     _b1Prev, _b2Prev, _b3Prev;
 static uint32_t _b1Ts, _b2Ts, _b3Ts;
+
+// 2026-10-06 - STUCK-BUTTON DETECTION. A button held low for BTN_STUCK_MS is not a press;
+// nobody holds a button for fifteen seconds. It is water, a jammed cap or a failed switch.
+//
+// Two reasons this is worth real code rather than a comment:
+//   1. The owner's reported fault was a stuck BTN3, and until now a stuck button produced
+//      silently broken navigation with nothing on screen to say why.
+//   2. A stuck BTN1 is a SAFETY issue, not a usability one. A 4 s BTN1 hold sleeps the
+//      board, and deep sleep halts the keep-alive, which stops the packs outputting power
+//      five seconds later — Rex's K-2, graded CRITICAL and latching. Refusing to sleep on
+//      a button we have decided is faulty closes it.
+//
+// Indices are 0=BTN1, 1=BTN2, 2=BTN3. Cleared the moment the pin reads high again, so a
+// genuinely long press is forgiven as soon as it ends.
+#define BTN_STUCK_MS 15000UL
+static bool     _btnStuck[3]    = { false, false, false };
+static uint32_t _btnLowSince[3] = { 0, 0, 0 };
+
+// Read by PowerManager.ino so a faulty BTN1 cannot sleep the board.
+bool btnIsStuck(uint8_t i) { return (i < 3) ? _btnStuck[i] : false; }
+
+static void updateStuckButtons(uint32_t now, bool b1, bool b2, bool b3) {
+    const bool low[3] = { b1 == LOW, b2 == LOW, b3 == LOW };
+    static const char* names[3] = { "BTN1", "BTN2", "BTN3" };
+    for (uint8_t i = 0; i < 3; i++) {
+        if (!low[i]) {
+            if (_btnStuck[i])
+                Serial.printf("[BTN] %s released after being stuck — back in service\n", names[i]);
+            _btnStuck[i]    = false;
+            _btnLowSince[i] = 0;
+            continue;
+        }
+        if (_btnLowSince[i] == 0) { _btnLowSince[i] = now; continue; }
+        if (!_btnStuck[i] && (now - _btnLowSince[i]) > BTN_STUCK_MS) {
+            _btnStuck[i] = true;
+            Serial.printf("[BTN] %s STUCK LOW for %lu s — ignoring it%s\n",
+                          names[i], (unsigned long)((now - _btnLowSince[i]) / 1000UL),
+                          (i == 0) ? " and BLOCKING SLEEP (a sleep here would cut traction power)"
+                                   : "");
+        }
+    }
+}
 #define DEBOUNCE_MS   50UL
 #define LONGPRESS_MS 800UL   // hold BTN3 to enter label assign
 
@@ -52,7 +94,6 @@ static uint32_t _b1Ts, _b2Ts, _b3Ts;
 // displayLoop() yields the display to PowerManager while this is true.
 bool gSleepCountdownActive = false;
 
-bool gLightOn = false;   // legacy flag only — GPIO13 is now NeoPixel strip 2 (not driven)
 
 // True unless the framebuffer alloc failed (no PSRAM + low heap). When false the
 // display is skipped entirely so the LEDs + keep-alive keep running (never hang).
@@ -216,14 +257,22 @@ static void drawHeader() {
     _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
     _gfx->print(wstr);
 
-    // Light state indicator
+    // 2026-10-06 - This slot used to show "LGT", an indicator for a light FET that was
+    // retired when GPIO13 became NeoPixel strip 2. It reported a flag that drove nothing,
+    // while the chord that toggled it was silently disabling screen navigation.
+    //
+    // The slot now earns its place: it names a button we have stopped trusting. The owner
+    // spent a session unable to change screens with nothing on-screen explaining why, so
+    // the fault that caused it is now visible at a glance.
     _gfx->setCursor(210, 4);
-    if (gLightOn) {
-        _gfx->setTextColor(C_GOOD);
-        _gfx->print("LGT");
-    } else {
-        _gfx->setTextColor(C_DIM);
-        _gfx->print("lgt");
+    {
+        int8_t stuck = -1;
+        for (uint8_t i = 0; i < 3; i++) if (btnIsStuck(i)) { stuck = (int8_t)i; break; }
+        if (stuck >= 0) {
+            char s[8]; snprintf(s, sizeof(s), "BTN%d!", (int)stuck + 1);
+            _gfx->setTextColor(C_POOR);
+            _gfx->print(s);
+        }
     }
 
     // ── Onboard 18650 battery — icon body centred on x=160 (bar midpoint) ──
@@ -1093,6 +1142,9 @@ void displayLoop() {
     bool b2 = digitalRead(BUTTON2_PIN);
     bool b3 = digitalRead(BUTTON3_PIN);
 
+    // Decide which buttons we still trust BEFORE anything acts on them.
+    updateStuckButtons(now, b1, b2, b3);
+
     // Any press counts as activity. This MUST stay above the overlay early-return —
     // it used to sit below it, so a press the overlay consumed never reset the idle
     // timer and the overlay effectively froze the home countdown.
@@ -1159,21 +1211,29 @@ void displayLoop() {
     // (disconnect-modal block removed 2026-10 — a missing pack now just vanishes from
     //  the Home gauges; the dropout is still recorded in the CSV by writePackEdges())
 
-    // BTN2+BTN3 combo: toggle the (now indicator-only) light flag — GPIO13 is NeoPixel strip 2
-    static bool     _comboFired = false;
-    static uint32_t _comboTs    = 0;
-    if (b2 == LOW && b3 == LOW) {
-        if (_comboTs == 0) _comboTs = now;
-        if (!_comboFired && (now - _comboTs) >= DEBOUNCE_MS) {
-            _comboFired = true;
-            gLightOn    = !gLightOn;   // flag only — GPIO13 is NeoPixel strip 2 now (no FET drive)
-            _b2Ts = now;  // reset BTN2 timer — suppresses screen-change on release
-            _b3Ts = now;  // reset BTN3 timer — suppresses screen-change on release
-        }
-    } else {
-        _comboTs    = 0;
-        _comboFired = false;
-    }
+    // 2026-10-06 - BTN2+BTN3 "light" COMBO DELETED, and the b3==HIGH gate on BTN2 with it.
+    //
+    // THE BUG THE OWNER REPORTED: "buttons 2 and 3 don't work to change screens... button 2
+    // turns on a little indicator called LGT... whether WiFi is on or not, I cannot change
+    // screens afterwards."
+    //
+    // Every symptom follows from BTN3 reading stuck LOW, and the software turned ONE stuck
+    // button into THREE broken functions:
+    //   - BTN2's screen-change required `b3 == HIGH` to avoid colliding with this combo, so
+    //     a low b3 disabled screen navigation permanently.
+    //   - This combo then fired on every BTN2 press instead, which is why the only thing the
+    //     button appeared to do was flip LGT.
+    //   - BTN3 itself needs a FALLING edge; a pin already low never produces one, so it did
+    //     nothing at all.
+    //   - BTN1 kept working because it has no cross-button gate. The owner observed exactly
+    //     that asymmetry.
+    //
+    // gLightOn drove NOTHING. GPIO13 became NeoPixel strip 2 when the light FET was retired
+    // (see ledInit()), so the flag and its on-screen "LGT" were pure vestige. A dead feature
+    // was disabling a live one. Deleting it removes the gate, and BTN2/BTN3 become
+    // independent — a stuck button can now only break ITSELF.
+    //
+    // If a real light is ever wired, it comes back as its own control, not as a chord.
 
     // BTN1: record press time on falling edge, act on rising edge (release).
     // Ignores releases from a hold >= SLEEP_HOLD_MS — device sleeps before release.
@@ -1187,17 +1247,17 @@ void displayLoop() {
     }
     _b1Prev = b1;
 
-    // BTN2: next screen — only fires if BTN3 is not also pressed (prevents combo collision)
-    if (_b2Prev == HIGH && b2 == LOW && b3 == HIGH && (now - _b2Ts) > DEBOUNCE_MS) {
+    // BTN2: next screen. No cross-button gate any more — see the deleted-combo note above.
+    // A stuck BTN3 used to disable this permanently; now the two are independent.
+    if (_b2Prev == HIGH && b2 == LOW && (now - _b2Ts) > DEBOUNCE_MS && !_btnStuck[1]) {
         _b2Ts   = now;
         _screen = (_screen + 1) % NUM_SCREENS;
     }
     _b2Prev = b2;
 
-    // BTN3: prev screen (short) / label assign (long on screen 0)
-    // Release-based; _b3Ts reset during combo ensures release fires with held≈0 → no action.
-    if (b3 == LOW && _b3Prev == HIGH && b2 == HIGH) _b3Ts = now;
-    if (_b3Prev == LOW && b3 == HIGH) {
+    // BTN3: prev screen (short) / label assign (long on screen 0 or 1)
+    if (b3 == LOW && _b3Prev == HIGH) _b3Ts = now;
+    if (_b3Prev == LOW && b3 == HIGH && !_btnStuck[2]) {
         uint32_t held = now - _b3Ts;
         if (held >= LONGPRESS_MS && (_screen == 0 || _screen == 1)) {
             // 2026-10 - Was screen 0 only, and hardcoded port 0, so ports 2-4 were
