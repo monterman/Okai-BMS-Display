@@ -365,7 +365,16 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // PSRAM claim I had not checked. `psram=` and `iram=` are now on every [DIAG] line so this
 // is never argued from a comment again.
 #define WIFI_MAX_NETS         4        // a LIST of networks; WiFiMulti joins the strongest
-#define WIFI_STA_CONNECT_MS   15000UL  // scan+join budget before falling back to AP
+// 2026-10-09 - 15000 -> 8000, and the number that forces it is not WiFi's at all.
+// UART.ino:119 invalidates a pack after 10 s with no frame. _multi.run() BLOCKS the main
+// loop for its whole budget, so a 15 s scan guarantees every pack is marked invalid: false
+// "#### PACK LOST" rows in the log, and - the part that matters - rideWatchUpdate() sees no
+// valid frames at all, so the SOP-038 interlocks go BLIND exactly while the radio comes up.
+// Measured on the bench 2026-10-09: a real join took 8.3 s and PACK2 went quiet for
+// 9072 ms, i.e. it came in under the 10 s invalidation by less than a second. That was luck,
+// not margin. 8000 keeps the whole blocking window inside pack validity with room to spare.
+// A join that needs longer than 8 s is one the AP fallback should handle anyway.
+#define WIFI_STA_CONNECT_MS   8000UL   // scan+join budget; MUST stay under UART's 10 s invalidate
 #define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router
 #define WIFI_ON_WINDOW_MS     60000UL  // owner's spec: 60 s reachable after every power-on
 #define WIFI_MDNS_NAME        "okai"   // http://okai.local, and the router learns "okai"
@@ -385,6 +394,14 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // beacon used to force a full deinit/re-init plus a 60 s wait — ~60 cycles/hour at the
 // edge of coverage, which is both pointless churn and the heap-leak path R-11 is about.
 #define STA_LOST_DEBOUNCE_MS  3000UL
+// How many times a DROPPED station link is re-attempted with no charger attached. Each
+// attempt blocks the main loop for up to WIFI_STA_CONNECT_MS, so this is deliberately
+// bounded: 3 tries at WIFI_STA_RETRY_MS apart covers a transient drop (a phone hotspot
+// sleeping while the house network is still in range — exactly what happened on the bench
+// 2026-10-09) without leaving the board scanning every 60 s while parked out of range. A
+// successful join resets the allowance. With a charger attached the retries are unlimited,
+// because that is the dock.
+#define STA_RELOST_MAX_TRIES  3
 // An associated AP client only DEFERS the home-network recovery while it is actually being
 // used. The owner's phone auto-joins "OkaiBMS" (predictable name, his decision), and an
 // idle phone in a pocket must not block the recovery for a whole power cycle.
@@ -562,6 +579,7 @@ void     packlabelInit();
 uint8_t  labelGet(uint8_t port);
 void     labelSet(uint8_t port, uint8_t label);
 void     labelStr(uint8_t port, char *buf, size_t len);
+void     portPackStr(uint8_t port, char *buf, size_t len);   // "P3-6" — port AND pack number
 bool     timeIsSynced();
 bool     timeIsRestored();   // epoch came from flash, not a live browser sync
 time_t   timeNowSec();

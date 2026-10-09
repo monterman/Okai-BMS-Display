@@ -255,6 +255,27 @@ void labelStr(uint8_t port, char *buf, size_t len) {
     else        snprintf(buf, len, "%u", l);
 }
 
+// "P3-6" — the PORT and the owner's PACK NUMBER together, which is the pairing he actually
+// uses and the one thing the screens did not show.
+//
+// 2026-10-09, his words: "I do not see the label number. I see P1, which is the port, and I
+// see the CYC, or the charge cycles, which I really don't care to see... that would be much
+// more helpful than the CYC. That doesn't matter to me because I don't know how to read
+// that." Correct on both counts — the cycle count is a diagnostic for the registry, not a
+// thing a human reads off a screen while holding a battery, and the number written in white
+// marker on the pack is the only identifier he has in his hand.
+//
+// "P3-?" when a pack is talking but the registry has not identified it. That state is real
+// and must be visible: it is exactly when he needs to go and assign a number, and showing a
+// bare "P3" would hide it.
+void portPackStr(uint8_t port, char *buf, size_t len) {
+    if (port >= NUM_PACKS) { snprintf(buf, len, "P?"); return; }
+    if (!packs[port].valid) { snprintf(buf, len, "P%u", port + 1); return; }
+    uint8_t n = labelGet(port);
+    if (n) snprintf(buf, len, "P%u-%u", port + 1, n);
+    else   snprintf(buf, len, "P%u-?", port + 1);
+}
+
 // ── Session counters ──────────────────────────────────────────────────────────
 // 2026-10-05 - F-3: cap raised 999 -> LOG_SESSION_MAX (9999). These counters CLAMP, they
 // do not wrap, and at the clamp two separate things broke:

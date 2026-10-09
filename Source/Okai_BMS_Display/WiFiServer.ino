@@ -43,6 +43,8 @@ static uint32_t  _staRetryAt   = 0;      // do not re-attempt a failed join befo
 static uint32_t  _staLostSince = 0;      // S-7: link first seen down — debounce, not a hair trigger
 static bool      _apNoEvidence = false;  // F-1: this AP is a fallback, not a decision — retry STA
                                          // once pack frames finally arrive
+static bool      _hadStation   = false;  // a station link succeeded at least once this boot
+static uint8_t   _staRelostTries = 0;    // consecutive no-charger re-join attempts
 static uint32_t  _lastReqMs    = 0;      // G-3: last HTTP request served — tells an idle
                                          // auto-joined phone from someone actually working
 static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
@@ -273,6 +275,11 @@ static bool _wifiTryStation() {
                   _netCount, (unsigned long)WIFI_STA_CONNECT_MS);
     if (_multi.run(WIFI_STA_CONNECT_MS) == WL_CONNECTED) {
         _wst = WST_STATION;
+        // A link has existed this boot, so a later drop is worth retrying even with no
+        // charger attached — see the re-join branch in wifiServerLoop(). Reset the attempt
+        // counter: this join worked, so the next drop gets a full allowance again.
+        _hadStation      = true;
+        _staRelostTries  = 0;
         _serverUp();
         Serial.printf("[WiFi] joined \"%s\"  IP=%s  http://%s.local  RSSI=%d dBm\n",
                       WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
@@ -1078,10 +1085,31 @@ void wifiServerLoop() {
     // steady one, and pack #1's fault is a STEADY bit whose dwell matured hours ago, so
     // without it a long coast could still fire a 15 s scan mid-session. Holding the radio up
     // uses the bare bit, so the CV taper never drops the link.
+    // 2026-10-09 - RE-JOIN AFTER A DROP, WITH NO CHARGER. Observed on the bench the day
+    // this shipped: the owner's phone hotspot dropped (it slept), the radio came down, and
+    // it never came back — even though his HOME network was saved and in range. His spec is
+    // the opposite: "if it finds a network, it will connect to the network and keep itself
+    // connected... I don't have to manually open the box". Only chargeJoinWorthy() could
+    // re-raise it, so no charger meant no reconnect until the next boot.
+    //
+    // Why it is BOUNDED rather than unlimited: each attempt blocks the main loop for up to
+    // WIFI_STA_CONNECT_MS, stalling pack reads and the display. Retrying forever would mean
+    // an 8 s stall every 60 s for as long as the board is out of range — e.g. parked on the
+    // beach between rides, packs idle, nothing charging. So a drop buys STA_RELOST_MAX_TRIES
+    // attempts; a success resets the allowance. A charger still gets unlimited retries,
+    // because that is the dock and he wants it reachable there indefinitely.
+    const bool chargeWantsJoin = chargeJoinWorthy(CHG_WIFI_DWELL_MS);
+    const bool relostWantsJoin = _hadStation && _staRelostTries < STA_RELOST_MAX_TRIES;
     if (_wst == WST_OFF && !_userForcedOff && !rideSuspected() &&
-        chargeJoinWorthy(CHG_WIFI_DWELL_MS) &&
+        (chargeWantsJoin || relostWantsJoin) &&
         wifiHasCreds() && (int32_t)(now - _staRetryAt) >= 0) {
-        Serial.println("[WiFi] charging - (re)trying the home network");
+        if (!chargeWantsJoin) {
+            _staRelostTries++;
+            Serial.printf("[WiFi] link was lost - re-join attempt %u of %u (no charger)\n",
+                          (unsigned)_staRelostTries, (unsigned)STA_RELOST_MAX_TRIES);
+        } else {
+            Serial.println("[WiFi] charging - (re)trying the home network");
+        }
         _staRetryAt = now + WIFI_STA_RETRY_MS;
         _wifiStartAuto();
     }

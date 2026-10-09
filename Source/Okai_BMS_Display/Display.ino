@@ -707,7 +707,7 @@ static void drawScreenDetail() {
     _gfx->setTextSize(1);
     _gfx->setTextColor(C_TEXT);
     _gfx->setCursor(4, 22);
-    char plabel[4]; snprintf(plabel, sizeof(plabel), "P%u", i + 1);
+    char plabel[10]; portPackStr(i, plabel, sizeof(plabel));
     _gfx->print(plabel);
     for (uint8_t d = 0; d < NUM_PACKS; d++) {
         uint16_t dx = 36 + d * 14;
@@ -857,13 +857,17 @@ static void drawScreenRideEnergy() {
             continue;
         }
         _gfx->setTextColor(C_TEXT);
-        char row[20];
+        // 2026-10-09 - show the PACK NUMBER beside the port: "P3-6 87% 401Wh". The owner's
+        // point, and it is right: the port is the socket, the number in white marker is the
+        // battery, and only the second one is useful while holding one.
+        char pp[10]; portPackStr(i, pp, sizeof(pp));
+        char row[28];
         if (phA) {
             float wh = (packs[i].soc / 100.0f) * PACK_DESIGN_WH;
-            snprintf(row, sizeof(row), "P%u %3u%% %4.0fWh", i+1, (unsigned)packs[i].soc, wh);
+            snprintf(row, sizeof(row), "%s %3u%% %4.0fWh", pp, (unsigned)packs[i].soc, wh);
         } else {
             float ah = (packs[i].soc / 100.0f) * PACK_DESIGN_AH;
-            snprintf(row, sizeof(row), "P%u %3u%% %.1fAh", i+1, (unsigned)packs[i].soc, ah);
+            snprintf(row, sizeof(row), "%s %3u%% %.1fAh", pp, (unsigned)packs[i].soc, ah);
         }
         _gfx->print(row);
     }
@@ -918,7 +922,8 @@ static void drawScreenCharging() {
         }
 
         // "P1 87%" size2
-        char lbl[10]; snprintf(lbl, sizeof(lbl), "P%u %u%%", i+1, (unsigned)packs[i].soc);
+        char pp[10]; portPackStr(i, pp, sizeof(pp));
+        char lbl[18]; snprintf(lbl, sizeof(lbl), "%s %u%%", pp, (unsigned)packs[i].soc);
         _gfx->print(lbl);
 
         // ETA / DONE right-aligned size2
@@ -999,15 +1004,19 @@ static void drawScreenHealth() {
         if (soh < lowestSoH) { lowestSoH = soh; worstPack = i; }
 
         _gfx->setTextColor(hc);
-        char row[26];
+        char pp3[10]; portPackStr(i, pp3, sizeof(pp3));
+        char row[34];
         if (phA) {
-            // P1  87%  401Wh  GOOD
-            snprintf(row, sizeof(row), "P%u %3u%% %4.0fWh %s",
-                     i+1, (unsigned)packs[i].soc, avWh, stag);
+            // P3-6  87%  401Wh  GOOD
+            snprintf(row, sizeof(row), "%s %3u%% %4.0fWh %s",
+                     pp3, (unsigned)packs[i].soc, avWh, stag);
         } else {
-            // P1  d43mV  8229c  97%
-            snprintf(row, sizeof(row), "P%u d%umV %uc %u%%",
-                     i+1, (unsigned)dmv, (unsigned)packs[i].cycles, (unsigned)soh);
+            // P3-6  d43mV  97%  — the cycle count is GONE from here on purpose. The owner:
+            // "the CYC... I really don't care to see. That doesn't matter to me because I
+            // don't know how to read that." It is a registry diagnostic, still in the CSV,
+            // on /packs and on the per-pack detail screen. The space buys the pack number.
+            snprintf(row, sizeof(row), "%s d%umV %u%%",
+                     pp3, (unsigned)dmv, (unsigned)soh);
         }
         _gfx->print(row);
     }
