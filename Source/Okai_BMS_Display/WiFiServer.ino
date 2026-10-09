@@ -18,7 +18,11 @@
 #include <Preferences.h>
 #include <ESPmDNS.h>
 #include <WiFiMulti.h>
-#include <esp_mac.h>      // esp_read_mac / ESP_MAC_WIFI_STA — see _wifiStartAP()
+#include <stdarg.h>       // va_list / vsnprintf — see _htmlAppend(). Arduino.h happens to
+                          // pull this in transitively today; an undeclared dependency on a
+                          // transitive include is exactly what breaks on a core upgrade.
+// <esp_mac.h> removed 2026-10-09: its only user was the AP SSID's MAC suffix, which the
+// owner reverted. Dead includes are how a comment outlives the code it described.
 
 bool wifiActive = false;                // true whenever the dashboard is reachable (STA or AP)
 static WebServer _srv(80);
@@ -39,6 +43,8 @@ static uint32_t  _staRetryAt   = 0;      // do not re-attempt a failed join befo
 static uint32_t  _staLostSince = 0;      // S-7: link first seen down — debounce, not a hair trigger
 static bool      _apNoEvidence = false;  // F-1: this AP is a fallback, not a decision — retry STA
                                          // once pack frames finally arrive
+static uint32_t  _lastReqMs    = 0;      // G-3: last HTTP request served — tells an idle
+                                         // auto-joined phone from someone actually working
 static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
 static bool      _mdnsUp       = false;
 // 2026-10-06 - A LIST of networks, not one, and WiFiMulti to choose between them.
@@ -118,20 +124,44 @@ static void _htmlAppend(char* buf, size_t cap, size_t* used, const char* fmt, ..
     va_start(ap, fmt);
     int n = vsnprintf(buf + *used, cap - *used, fmt, ap);
     va_end(ap);
-    if (n < 0) return;                       // encoding error: the cursor does not move
-    const size_t room = cap - *used - 1;     // -1 preserves room for the NUL
+    if (n < 0) { buf[*used] = '\0'; return; }  // encoding error: terminate, cursor still
+    const size_t room = cap - *used - 1;       // -1 preserves room for the NUL
     *used += ((size_t)n > room) ? room : (size_t)n;
 }
 
+// Did the last build truncate? The OTHER half of R-5 was silent truncation, and the fix
+// there was a visible banner (packRegistryList's red <tr>). Same treatment here: a short
+// page is only safe if it admits to being short.
+static inline bool _htmlTruncated(size_t used, size_t cap) { return used + 1 >= cap; }
+
 bool wifiHasCreds() { return _netCount > 0; }
 
-// Delete one stored network by slot. Needed because the setup page used to be write-only:
+// Delete one stored network, BY NAME. Needed because the setup page used to be write-only:
 // there was no way to see what was saved, let alone remove a typo, short of a full reflash.
-static bool wifiNetForget(uint8_t slot) {
-    if (slot >= _netCount) return false;
+//
+// 2026-10-09 (G-2) - by name, NOT by slot index, and the difference is a silent wrong
+// delete. Forgetting shifts every later entry down, so an index rendered into the page goes
+// stale the instant anything is removed: with three saved, tapping forget on slot 0 and then
+// tapping slot 1 from a page that has not reloaded deletes a DIFFERENT network than the one
+// the button was next to. A double-tap on a slow phone does the same. It also failed quietly
+// about half the time, because a stale index >= _netCount is simply a no-op - worse than
+// failing loudly. And String::toInt() returns 0 for anything unparseable, which is
+// indistinguishable from a legitimate "forget slot 0", so a garbled form value deleted the
+// first network. Matching on the SSID closes all three at once: the name identifies the
+// same thing before and after any shift, and an unknown name deletes nothing.
+static bool wifiNetForget(const char* ssid) {
+    if (!ssid || !ssid[0]) return false;
+    uint8_t slot = _netCount;
+    for (uint8_t i = 0; i < _netCount; i++)
+        if (strcmp(_nets[i].ssid, ssid) == 0) { slot = i; break; }
+    if (slot >= _netCount) {
+        Serial.printf("[WiFi] forget \"%s\" - not stored, nothing done\n", ssid);
+        return false;
+    }
     for (uint8_t i = slot; i + 1 < _netCount; i++) _nets[i] = _nets[i + 1];
     _netCount--;
     memset(&_nets[_netCount], 0, sizeof(WifiNet));
+    Serial.printf("[WiFi] forgot \"%s\" (%u left)\n", ssid, _netCount);
     return wifiNetsSave();
 }
 
@@ -243,8 +273,20 @@ static bool _wifiTryStation() {
     return false;
 }
 
+// Declared above its first use: _wifiStartAuto() retires it for every caller (G-1).
+static bool _bootJoinPending = false;
+
 // Try the home network, fall back to the AP. Used at boot, at charge start, and by BTN1.
 static void _wifiStartAuto() {
+    // 2026-10-09 (G-1) - RETIRE THE BOOT JOIN HERE, for every caller.
+    // Without this: power up, press Join (or BTN1) at t=20 s, get a working station link,
+    // and then at t=30 s the still-armed boot-join deadline fires _wifiStartAP(), whose
+    // WiFi.mode(WIFI_AP) drops the station interface. The owner pressed Join, the page said
+    // "joining", and okai.local never answers. It belongs in here rather than in each
+    // caller because all three paths - the boot join itself, wifiToggle() and the /wifi
+    // Join button - mean the same thing: a join decision has now been made, so the deferred
+    // one is spent.
+    _bootJoinPending = false;
     _wstSince = millis();
     if (!_wifiTryStation()) _wifiStartAP();
 }
@@ -255,7 +297,6 @@ static void _wifiStartAuto() {
 // R-2: do NOT join from setup(). A reset mid-ride would raise the radio exactly where
 // SOP-038 forbids it, and mid-session reboots are PROVEN on this unit. Arm a request here
 // and let wifiServerLoop() honour it once it can see whether a ride is in progress.
-static bool _bootJoinPending = false;
 void wifiStartBoot() {
     _userForcedOff    = false;
     _staRetryAt       = 0;
@@ -281,6 +322,7 @@ static bool safePath(const String &name) {
 
 // ── Route: / ─────────────────────────────────────────────────────────────────
 static void handleRoot() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     String h;
     h.reserve(4096);
 
@@ -461,6 +503,7 @@ static void handleRoot() {
 
 // ── Route: /settime ───────────────────────────────────────────────────────────
 static void handleSetTime() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
         _srv.send(403, "text/plain", "Forbidden");
         return;
@@ -478,6 +521,7 @@ static void handleSetTime() {
 
 // ── Route: /csv?f=/NAME.csv ───────────────────────────────────────────────────
 static void handleCsv() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     String fname = _srv.hasArg("f") ? _srv.arg("f") : String("/bms_log.csv");
     if (!safePath(fname) || !isCsvFile(fname.c_str()) || !fsReady || !LittleFS.exists(fname)) {
         _srv.send(404, "text/plain", "Not found");
@@ -493,6 +537,7 @@ static void handleCsv() {
 
 // ── Route: /delete?f=/NAME.csv ────────────────────────────────────────────────
 static void handleDelete() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
         _srv.send(403, "text/plain", "Forbidden");
         return;
@@ -509,6 +554,7 @@ static void handleDelete() {
 
 // ── Route: /clearall ──────────────────────────────────────────────────────────
 static void handleClearAll() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
         _srv.send(403, "text/plain", "Forbidden");
         return;
@@ -568,6 +614,7 @@ static void handleClearAll() {
 
 // ── Route: /rawdump — hex dump of all pack frames (bench test / UID hunt) ─────
 static void handleRawDump() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     String h;
     h.reserve(1024);
     h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -611,6 +658,7 @@ static void handleRawDump() {
 
 // ── Route: /packs — lifetime registry for all known packs ────────────────────
 static void handlePacks() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     String h;
     h.reserve(2048);
     h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -692,6 +740,7 @@ static void handlePacks() {
 }
 
 static void handleNotFound() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     _srv.send(404, "text/plain", "Not found");
 }
 
@@ -701,6 +750,7 @@ static void handleNotFound() {
 // and it survives a firmware flash. The password field is write-only: the form shows
 // whether one is stored, never what it is.
 static void handleWifiSetup() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (_srv.hasArg("ssid")) {
         if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
             _srv.send(403, "text/plain", "Forbidden");
@@ -735,7 +785,7 @@ static void handleWifiSetup() {
             _srv.send(403, "text/plain", "Forbidden");
             return;
         }
-        wifiNetForget((uint8_t)_srv.arg("forget").toInt());
+        wifiNetForget(_srv.arg("forget").c_str());
         _srv.sendHeader("Location", "/wifi");
         _srv.send(302, "text/plain", "forgotten");
         return;
@@ -778,7 +828,15 @@ static void handleWifiSetup() {
     // and list+body together are ~5.5 kB. Single call site, single-threaded loopTask, so
     // static costs nothing and shows up honestly in the RAM figure instead of hiding in
     // the stack high-water mark. Same reasoning as victims[] in packRegistryForgetAll.
-    static char list[1400];
+    // Sized FROM the constant, not from a measurement of today's value of it. A row is
+    // ~273 B measured (232 literal + substitutions) and carrying the SSID in the forget
+    // form instead of an index adds up to 31 more, so 340 is the per-entry worst case with
+    // headroom; +96 covers the heading and the <ul>. The static_assert is the point: at
+    // WIFI_MAX_NETS 5 the old hand-picked 1400 would have truncated SILENTLY, and a
+    // constant two files away is exactly the kind of change nobody re-checks a buffer for.
+    #define WIFI_LIST_CAP (96 + WIFI_MAX_NETS * 340)
+    static_assert(WIFI_LIST_CAP >= 96 + WIFI_MAX_NETS * 340, "list cap must track WIFI_MAX_NETS");
+    static char list[WIFI_LIST_CAP];
     size_t lu = 0;
     list[0] = '\0';
     _htmlAppend(list, sizeof(list), &lu,
@@ -793,11 +851,22 @@ static void handleWifiSetup() {
                 "<li><b>%s</b> "
                 "<form method='POST' action='/wifi' style='display:inline'>"
                 "<input type='hidden' name='_t' value='%s'>"
-                "<input type='hidden' name='forget' value='%u'>"
+                "<input type='hidden' name='forget' value='%s'>"
                 "<button style='padding:2px 8px;background:#5a1f1f'>forget</button>"
-                "</form></li>", _nets[i].ssid, _csrfToken, (unsigned)i);
+                "</form></li>", _nets[i].ssid, _csrfToken, _nets[i].ssid);
         }
         _htmlAppend(list, sizeof(list), &lu, "</ul>");
+    }
+    if (_htmlTruncated(lu, sizeof(list))) {
+        Serial.println("[WiFi] /wifi list TRUNCATED - the page is incomplete");
+        // Overwrite the tail rather than appending, since by definition there is no room.
+        const char* warn = "<p style='color:#ff5555'><b>LIST TRUNCATED &mdash; more "
+                           "networks are stored than fit here.</b></p>";
+        const size_t wl = strlen(warn);
+        if (sizeof(list) > wl + 1) {
+            memcpy(list + (sizeof(list) - wl - 1), warn, wl);
+            list[sizeof(list) - 1] = '\0';
+        }
     }
 
     static char body[4096];
@@ -854,6 +923,7 @@ static void handleWifiSetup() {
 // before it existed the only way to see stored records was decoding raw flash, and the only
 // way to remove one was writing a flash image back.
 static void handlePackEdit() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
         _srv.send(403, "text/plain", "Forbidden");
         return;
@@ -875,6 +945,7 @@ static void handlePackEdit() {
 // packs by the old matcher, so stored wear history is BLENDED between batteries rather than
 // merely mislabelled — repairing it would leave numbers that look authoritative and are not.
 static void handlePackWipe() {
+    _lastReqMs = millis();   // G-3: somebody is actually using this radio
     if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken) ||
         _srv.arg("confirm") != "WIPE") {
         _srv.send(403, "text/plain",
@@ -1086,8 +1157,21 @@ void wifiServerLoop() {
     // So: the moment real pack frames arrive we can finally judge, and we judge. Not while
     // someone is actually USING the AP, because that is the registry rebuild and pulling
     // the network out from under it would be worse than the thing being fixed.
+    // 2026-10-09 (G-3) - "no client" is not enough, now that the AP name is predictable
+    // again. The owner's phone will AUTO-JOIN `OkaiBMS`, and an idle associated phone would
+    // then block this recovery for the whole power cycle: boot with no pack -> fallback AP
+    // -> phone auto-joins in his pocket -> no home WiFi, which is F-1 wearing a different
+    // hat. The Join button happens to rescue it, but relying on him to press a button to
+    // undo a thing the firmware did by itself is not a design.
+    //
+    // So an associated client only defers the recovery while it is actually BEING USED. A
+    // phone sitting idle in a pocket issues no requests; the registry rebuild issues them
+    // constantly (the dashboard self-refreshes every 5 s). After AP_IDLE_RECOVER_MS of
+    // silence we judge, which is the behaviour the owner asked for: no button, no box.
+    const bool apBusy = (WiFi.softAPgetStationNum() > 0) &&
+                        _lastReqMs && (now - _lastReqMs) < AP_IDLE_RECOVER_MS;
     if (_apNoEvidence && _wst == WST_AP && packFramesSeen() && !rideEverSeen() &&
-        !_userForcedOff && wifiHasCreds() && WiFi.softAPgetStationNum() == 0) {
+        !_userForcedOff && wifiHasCreds() && !apBusy) {
         _apNoEvidence = false;
         Serial.println("[WiFi] pack frames arrived - the fallback AP can judge now, "
                        "trying the home network");

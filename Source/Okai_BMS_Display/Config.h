@@ -362,6 +362,13 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // beacon used to force a full deinit/re-init plus a 60 s wait — ~60 cycles/hour at the
 // edge of coverage, which is both pointless churn and the heap-leak path R-11 is about.
 #define STA_LOST_DEBOUNCE_MS  3000UL
+// An associated AP client only DEFERS the home-network recovery while it is actually being
+// used. The owner's phone auto-joins "OkaiBMS" (predictable name, his decision), and an
+// idle phone in a pocket must not block the recovery for a whole power cycle. A phone
+// sitting idle serves no requests; the registry rebuild serves them constantly — the
+// dashboard self-refreshes every 5 s and /rawdump every 3 s, so 90 s of total silence
+// means nobody is working.
+#define AP_IDLE_RECOVER_MS    90000UL
 
 // ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
 #define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated
