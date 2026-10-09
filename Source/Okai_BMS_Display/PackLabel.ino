@@ -175,6 +175,29 @@ time_t timeNowSec() {
 // Called from /settime (browser JS Date.now() in milliseconds)
 void timeSyncSet(int64_t browserEpochMs) {
     uint32_t epochSec = (uint32_t)(browserEpochMs / 1000LL);
+
+    // 2026-10-09 - DRIFT GUARD. The dashboard carries <meta refresh 5> AND an inline
+    // fetch('/settime'), so an open browser tab called this EVERY 5 SECONDS and each call
+    // unconditionally erased a flash sector and wrote the DS3231: ~17,000 sector erases a
+    // day from a tab nobody is looking at. The AP-client window re-arm added today is what
+    // makes that indefinite rather than self-limiting after 60 s, so it is mine to fix.
+    //
+    // It also matters for SOP-038: a flash erase blocks, and the thing it blocks is the
+    // keep-alive's own flash access path. Logging ranks below WiFi; a clock write that
+    // nothing asked for ranks below everything.
+    //
+    // Accept a sync that moves the clock meaningfully, or the first one of a session.
+    // Anything inside the window is the same tab telling us what we already know.
+    const bool  firstSync = !_timeSynced;
+    const int32_t driftSec = firstSync ? 0 : (int32_t)(epochSec - timeNowSec());
+    const int32_t driftMag = driftSec < 0 ? -driftSec : driftSec;
+    if (!firstSync && driftMag < TIME_RESYNC_MIN_DRIFT_SEC) {
+        _syncEpochSec  = epochSec;        // keep RAM exact — costs nothing
+        _syncMillisSec = millis() / 1000;
+        _timeRestored  = false;
+        return;                            // no flash write, no I2C write
+    }
+
     _syncEpochSec  = epochSec;
     _syncMillisSec = millis() / 1000;
     _timeSynced    = true;

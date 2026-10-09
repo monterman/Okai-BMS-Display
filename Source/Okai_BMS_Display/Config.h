@@ -123,7 +123,29 @@
 // flash. Set an entry to 0 to leave that port alone.
 #define LABEL_SEED_VERSION   1
 #define LABEL_SEED_WINDOW_MS 120000UL   // seed only packs present in the first 2 min
-#define LABEL_SEED_LIST      { 1, 4, 6, 0 }   // ports 1-4; 0 = do not seed this port
+
+// 2026-10-09 - SEED DISARMED, all four entries zero. Two independent reasons, and the
+// second one is why zeroing beats trusting the gates:
+//
+//   1. THE TABLE IS KNOWN WRONG. It was written from the owner's visual read on
+//      2026-10-05. On 2026-10-06 he read the same physical packs again and got
+//      port 2 = #6 (not #4) and port 4 = #4 (not #6). The 45-cycle pack never moved
+//      between those two days — only the reading changed. So one of the two reads is a
+//      human error, no firmware gate can tell which, and the registry is about to be
+//      wiped and rebuilt BY HAND from the white markers. The seed has no job left.
+//
+//   2. A FORMAT RE-ARMS IT, AND THEN ALL FOUR GATES FAIL AT ONCE (audit R-15 / F-8).
+//      /labelseed.bin lives INSIDE the filesystem a format destroys, so a format-on-mount
+//      wipes the version marker and the seed goes live again. In that same moment /packs
+//      is empty, so every pack registers fresh with _matchDiff == 0 — which EXEMPTS
+//      Gate 4 by construction. Gates 1 and 3 are gone with the file and the empty
+//      registry. The one case where the seed could do the most damage is the one case
+//      where nothing stops it. Zero entries make that path inert without relying on any
+//      gate holding.
+//
+// TO RE-SEED after moving packs around: raise LABEL_SEED_VERSION, edit the table, flash.
+// Set an entry to 0 to leave that port alone. All zeros = the seed never writes anything.
+#define LABEL_SEED_LIST      { 0, 0, 0, 0 }   // ports 1-4; 0 = do not seed this port
 
 // 2026-10-05 - GATE 4, added after audit finding F-1. The three gates above stop the
 // seed REPEATING; none of them stopped it being CONFIDENTLY WRONG.
@@ -324,6 +346,15 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 #define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router
 #define WIFI_ON_WINDOW_MS     60000UL  // owner's spec: 60 s reachable after every power-on
 #define WIFI_MDNS_NAME        "okai"   // http://okai.local, and the router learns "okai"
+// Boot-join gate (M-4). EARLIEST: enough time for several 1 Hz pack frames to land, so
+// bootJoinSafe() is judging real telemetry rather than an empty table. DEADLINE: if the
+// evidence never arrives - no packs plugged in, or a pack discharging - the join is
+// abandoned, not attempted blind. The charge-start retry picks it up at the dock.
+#define BOOT_JOIN_EARLIEST_MS 5000UL
+#define BOOT_JOIN_DEADLINE_MS 30000UL
+// Smallest clock correction worth a flash erase + a DS3231 write. An open dashboard tab
+// re-syncs every 5 s; 30 s keeps CSV timestamps honest while reducing that to ~nothing.
+#define TIME_RESYNC_MIN_DRIFT_SEC 30
 
 // ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
 #define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated
@@ -491,6 +522,17 @@ time_t   timeNowSec();
 const char *loggerActiveFile();   // Logger.ino — file currently being written
 void     timeSyncSet(int64_t browserEpochMs);
 LogMode  logCurrentMode();           // Logger.ino — prototype for Display.ino
+
+// ─── Cross-file function prototypes (RideWatch.ino) ──────────────────────────
+// The SOP-038 interlocks. These read PACK TELEMETRY ONLY — never the logger — because
+// the priority order is keep-alive > telemetry > display > logging > WiFi, and an
+// interlock protecting the top of that list must not be derived from near the bottom.
+// rideWatchUpdate() must be called every loop pass; the rest are pure reads.
+void rideWatchUpdate();
+bool rideSuspected();         // any pack discharging past threshold, within hysteresis
+bool packsLoadedRecently();   // real current either way in the last 60 s — sleep interlock
+bool chargeActive();          // charger attached AND current actually going in
+bool bootJoinSafe();          // positive evidence no ride is running — boot-join gate
 
 // ─── Cross-file function prototypes (PackRegistry.ino) ───────────────────────
 extern PackRecord packRec[NUM_PACKS];

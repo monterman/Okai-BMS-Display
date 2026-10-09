@@ -509,10 +509,18 @@ static bool _adoptByNumber(uint8_t port, uint8_t n) {
     // regCYC both write the SAME file at session close, so one port's entire session
     // energy and its sessions++ are silently lost to last-writer-wins, and historyLen
     // diverges between the two copies.
+    // 2026-10-09 - R-6, RE-OPENED AND NOW CLOSED HERE TOO. This check used to DERIVE the
+    // other port's filename from its regCYC instead of reading the name it actually holds.
+    // The fix was applied to packRegistryIdentify() and written up there, but this twin was
+    // missed — and this is the ambiguity-resolution path, which is exactly what the
+    // 8-pack rebuild triggers. Two packs sharing a cycle count get names CYC-56.dat and
+    // CYC-56_2.dat; deriving from regCYC yields CYC-56.dat for BOTH, so the collision is
+    // invisible, two ports end up on one file, and last-writer-wins silently destroys one
+    // pack's session Wh and sessions++. Ports 1 and 4 both read 56 cycles today, so the _2
+    // names already exist on the device. Compare the STORED name.
     for (uint8_t q = 0; q < NUM_PACKS; q++) {
-        if (q == port || !packRec[q].known) continue;
-        char other[40]; _cycFilename(other, sizeof(other), packRec[q].regCYC);
-        if (strcmp(other, foundPath) == 0) {
+        if (q == port || !packRec[q].known || !packRec[q].file[0]) continue;
+        if (strcmp(packRec[q].file, foundPath) == 0) {
             Serial.printf("[REG] port%u cannot adopt #%u - already held by port%u\n",
                           port + 1, (unsigned)n, q + 1);
             return false;
@@ -903,12 +911,23 @@ uint8_t packRegistryList(char* out, size_t outLen, const char* csrf) {
                     csrf, path, (unsigned)NUM_LABELS,
                     (unsigned)(r.label ? r.label : r.autoNum));
                 if (n >= (int)sizeof(row)) n = (int)sizeof(row) - 1;   // clamp before use
+                // 2026-10-09 - COUNT ONLY WHAT WE ACTUALLY EMITTED. count++ used to run
+                // unconditionally, outside this guard, so a record dropped for lack of
+                // buffer still incremented the number printed in the footer. At ~463 B a
+                // row the old 3600 B buffer held 7 — so a rebuilt 8-pack fleet would have
+                // rendered 7 rows under a footer reading "8 stored record(s)", with no
+                // warning anywhere. Silent undercount on the one page the rebuild is
+                // driven from. The caller's buffer is now sized for the full fleet; this
+                // makes the count honest if it is ever too small again.
                 if (n > 0 && used + (size_t)n + 1 < outLen) {
                     memcpy(out + used, row, (size_t)n);
                     used += (size_t)n;
                     out[used] = '\0';
+                    count++;
+                } else {
+                    Serial.printf("[REG] LIST TRUNCATED - %s did not fit in %u bytes; "
+                                  "the page is INCOMPLETE\n", path, (unsigned)outLen);
                 }
-                count++;
             }
             f = dir.openNextFile();
         }

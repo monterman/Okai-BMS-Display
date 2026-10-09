@@ -15,22 +15,23 @@ static uint32_t sPm_downMs      = 0;
 static uint32_t sPm_lastOverlay = 0;
 static bool     sPm_armed       = false;   // hold-to-sleep arms only AFTER BTN1 is released once
 static bool     sPm_sleepArmed  = false;   // held past SLEEP_HOLD_MS; sleeps on RELEASE
-static uint32_t sPm_lastLoadMs  = 0;       // last time any pack drew real current
-
-// Any pack above this, any direction, counts as "in use".
-#define PM_LOAD_A        1.0f
-#define PM_LOAD_WINDOW   60000UL
-
-static bool pmPacksLoadedRecently() {
-    const uint32_t now = millis();
-    for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        if (!packs[i].valid) continue;
-        float a = packs[i].current;
-        if (a < 0) a = -a;
-        if (a > PM_LOAD_A) { sPm_lastLoadMs = now; break; }
-    }
-    return sPm_lastLoadMs && (now - sPm_lastLoadMs) < PM_LOAD_WINDOW;
-}
+// 2026-10-09 - THE LOAD INTERLOCK MOVED TO RideWatch.ino, AND WHY.
+//
+// What used to be here was a function that both sampled and answered: it wrote
+// sPm_lastLoadMs inside itself, and it was called ONLY from the sleep-decision branch
+// below. So the "has any pack drawn current in the last 60 s" window it documented did
+// not exist — there was no continuous sampling, and the timestamp it compared against
+// was from the previous sleep attempt. It was an instantaneous snapshot wearing a 60 s
+// label, and the 60 s was the entire point: a rider coasting with the throttle shut,
+// water bridging BTN1 for 4 s and then draining, gives a clean release with no pack
+// loaded at that instant. Sleep, keep-alive stops, and under K-1 the cut LATCHES.
+//
+// It also did not filter the 0x2020 / 8.224 A idle placeholder (OkaiBMS.h:43), which
+// inverts the interlock the other way: an idle pack publishing the placeholder reads as
+// 8 A of load, so sleep would be refused forever on a quiet bench.
+//
+// packsLoadedRecently() is now a pure read of a sampler that runs on EVERY loop pass,
+// which makes both of those bugs unwriteable here.
 
 void powerManagerInit() {
     pinMode(BUTTON1_PIN, INPUT_PULLUP);
@@ -101,7 +102,7 @@ void powerManagerLoop() {
                 // water has packs under load. Sleeping there halts the keep-alive and the
                 // packs cut output 5 s later, which is a vehicle stopping, not a screen
                 // turning off. Recommended by the 2026-10-05 audit and not taken then.
-                if (pmPacksLoadedRecently()) {
+                if (packsLoadedRecently()) {
                     Serial.println("[PWR] sleep REFUSED - packs have been under load within "
                                    "the last 60 s. Sleeping would stop the keep-alive and cut "
                                    "traction power.");

@@ -16,7 +16,7 @@ void setup() {
 
   powerManagerInit(); // configures EXT0 wakeup before anything else
   uartInit();         // open Serial1 (GPIO2 TX) BEFORE the heartbeat task starts
-  heartbeatInit();    // spawns the Core-1 (prio 18) keep-alive task
+  heartbeatInit();    // spawns the Core-1 (prio 20) keep-alive task
   ledInit();          // NeoPixel bars on GPIO10/13 — EARLY, so the keep-alive
                       // indicator + strips are live and cleared BEFORE the display /
                       // fs / wifi init (which must never gate or crash the indicator)
@@ -38,6 +38,9 @@ void loop() {
   powerManagerLoop(); // hold BTN1 ≥ 4 s → deep sleep (runs before display reads button)
   heartbeatLoop();    // no-op — keep-alive now runs on its own Core-1 task
   uartLoop();         // Priority 2 — read pack data
+  rideWatchUpdate();  // SOP-038 interlocks — MUST run every pass, right after uartLoop()
+                      // so it samples fresh frames. Nothing may early-return above this:
+                      // the ride and load interlocks are only as good as their sampling.
   loggerLoop();       // Priority 3 — flush to LittleFS
   displayLoop();      // Priority 4 — update TFT
   wifiServerLoop();   // Priority 5 — serve CSV if WiFi active
