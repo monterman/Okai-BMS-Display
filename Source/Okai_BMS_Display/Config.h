@@ -364,11 +364,20 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 #define STA_LOST_DEBOUNCE_MS  3000UL
 // An associated AP client only DEFERS the home-network recovery while it is actually being
 // used. The owner's phone auto-joins "OkaiBMS" (predictable name, his decision), and an
-// idle phone in a pocket must not block the recovery for a whole power cycle. A phone
-// sitting idle serves no requests; the registry rebuild serves them constantly — the
-// dashboard self-refreshes every 5 s and /rawdump every 3 s, so 90 s of total silence
-// means nobody is working.
-#define AP_IDLE_RECOVER_MS    90000UL
+// idle phone in a pocket must not block the recovery for a whole power cycle.
+//
+// 2026-10-09 - 90 s → 300 s, AND the justification I first wrote for 90 s was WRONG. It
+// claimed "the registry rebuild serves requests constantly (the dashboard self-refreshes
+// every 5 s and /rawdump every 3 s)". True of `/` and `/rawdump` — but the rebuild runs on
+// **`/packs`, which has no self-refresh at all**, and neither does `/wifi`. On those pages
+// requests arrive only when he taps. Plug a pack in, read the white marker, fetch the next
+// one out of a bag: over 90 s between taps is completely ordinary, and the recovery would
+// then have pulled the AP out from under live bench work.
+//
+// The error is asymmetric, so err long: too long merely delays a convenience recovery for
+// an idle phone; too short interrupts the job. 5 minutes of total HTTP silence means
+// nobody is working.
+#define AP_IDLE_RECOVER_MS    300000UL
 
 // ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
 #define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated

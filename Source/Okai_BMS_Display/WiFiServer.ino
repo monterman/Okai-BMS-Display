@@ -134,6 +134,17 @@ static void _htmlAppend(char* buf, size_t cap, size_t* used, const char* fmt, ..
 // page is only safe if it admits to being short.
 static inline bool _htmlTruncated(size_t used, size_t cap) { return used + 1 >= cap; }
 
+// NOT ESCAPING SSIDs INTO THE /wifi ATTRIBUTES — a deliberate omission, 2026-10-09.
+// The name goes into value='...' and comes back as the form value identifying which network
+// to forget, so an apostrophe would end the attribute early and the delete would silently
+// do nothing (audit MEDIUM, graded post-flash). iOS does default its hotspot to
+// "<Name>'s iPhone", so I started writing the escape — then the owner said plainly that his
+// networks contain no apostrophes. Taking him at his word: escaping would have grown the
+// row budget by ~2x and the page buffers with it, on the very commit that ships, which is
+// the pattern that produced today's two regressions. The failure mode if a name like that
+// ever IS added is narrow and non-destructive: add, save and join all work; only `forget`
+// on that one entry no-ops, with "not stored, nothing done" on serial. Escape it then.
+
 bool wifiHasCreds() { return _netCount > 0; }
 
 // Delete one stored network, BY NAME. Needed because the setup page used to be write-only:
@@ -834,8 +845,16 @@ static void handleWifiSetup() {
     // headroom; +96 covers the heading and the <ul>. The static_assert is the point: at
     // WIFI_MAX_NETS 5 the old hand-picked 1400 would have truncated SILENTLY, and a
     // constant two files away is exactly the kind of change nobody re-checks a buffer for.
-    #define WIFI_LIST_CAP (96 + WIFI_MAX_NETS * 340)
-    static_assert(WIFI_LIST_CAP >= 96 + WIFI_MAX_NETS * 340, "list cap must track WIFI_MAX_NETS");
+    // 2026-10-09 - the assert that was here was `X >= X` and could never fire. Worse than
+    // absent: it read as protection in the exact spot the last silent-truncation bug lived.
+    // These two check real invariants. The first catches someone adding markup to the row -
+    // which is precisely what THIS commit did, +31 B for the SSID in the forget field.
+    #define WIFI_ROW_BUDGET 340
+    #define WIFI_LIST_CAP   (96 + WIFI_MAX_NETS * WIFI_ROW_BUDGET)
+    // Literal bytes in the row format below, measured: 231. Plus two SSIDs (<=32 each) and
+    // the 8-char CSRF token = 303 worst case.
+    static_assert(231 + 2 * 32 + 8 <= WIFI_ROW_BUDGET,
+                  "/wifi row markup grew past its per-entry budget - raise WIFI_ROW_BUDGET");
     static char list[WIFI_LIST_CAP];
     size_t lu = 0;
     list[0] = '\0';
@@ -869,7 +888,15 @@ static void handleWifiSetup() {
         }
     }
 
+    // The second invariant, and the one that will actually bite: `list` is substituted INTO
+    // `body`, so body must hold the template plus a worst-case list. Template measured at
+    // ~1931 literal bytes + ~55 of other substitutions; 2100 is that with headroom. At
+    // WIFI_MAX_NETS 6 the old 4096 would have overflowed and `body`'s snprintf return is
+    // discarded, so it would have truncated the page with no banner at all.
+    #define WIFI_BODY_TEMPLATE_MAX 2100
     static char body[4096];
+    static_assert(WIFI_LIST_CAP + WIFI_BODY_TEMPLATE_MAX <= sizeof(body),
+                  "the /wifi network list no longer fits inside body[] - raise body");
     snprintf(body, sizeof(body),
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -916,6 +943,10 @@ static void handleWifiSetup() {
         _csrfToken,
         _netCount ? "" : " disabled");
     _srv.send(200, "text/html", body);
+    // Function-local #defines leak into every later .ino in the concatenated sketch TU.
+    #undef WIFI_ROW_BUDGET
+    #undef WIFI_LIST_CAP
+    #undef WIFI_BODY_TEMPLATE_MAX
 }
 
 // ── Route: /packedit ─────────────────────────────────────────────────────────
