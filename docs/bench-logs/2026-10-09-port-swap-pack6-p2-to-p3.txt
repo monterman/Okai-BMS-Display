@@ -1,0 +1,46 @@
+# Port-swap test, Okai 0.3.3-0ec21e1, 2026-10-09. Pack #6 (owner marker; cyc 45) port 2 -> port 3. Read over home Wi-Fi (192.168.1.53).
+# Result: [17]=00 [19]=02 [20]=00 on both ports -> bytes follow the PACK (one pack, one crossing).
+
+## before rawdump 1
+Port 1 (L1) — NO DATA
+Port 2 (L4) — valid
+3A 16 20 02 00 61 63 16 15 15 18 2D 00 00 0F 00 00 00
+          00 02 00 44 A0 00 00 00 00 00 00 2D 10 E3 0F 52 2C 99
+Port 3 (LP3) — NO DATA
+Port 4 (LP4) — NO DATA
+
+## before rawdump 2
+Port 1 (L1) — NO DATA
+Port 2 (L4) — valid
+3A 16 20 02 00 61 63 16 15 15 17 2D 00 00 0F 00 00 00
+          00 02 00 47 A0 00 00 00 00 00 00 2E 10 E4 0F 52 2C 37
+Port 3 (LP3) — NO DATA
+Port 4 (LP4) — NO DATA
+
+## after rawdump 1
+Port 1 (L1) — NO DATA
+Port 2 (L4) — NO DATA
+Port 3 (LP3) — valid
+3A 16 20 02 00 61 63 16 15 15 17 2D 00 00 0F 00 00 00
+          00 02 00 44 A0 00 00 00 00 00 00 2D 10 E3 0F 52 2C 9C
+Port 4 (LP4) — NO DATA
+
+## after rawdump 2
+Port 1 (L1) — NO DATA
+Port 2 (L4) — NO DATA
+Port 3 (LP3) — valid
+3A 16 20 02 00 61 63 16 15 15 17 2D 00 00 0F 00 00 00
+          00 02 00 44 A0 00 00 00 00 00 00 2D 10 E3 0F 52 2C 9C
+Port 4 (LP4) — NO DATA
+
+## serial around the AP->station join
+[ 103.01] [DIAG] t=226s hb=227 maxgap=1000ms vbat=4.67V heap=166372 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
+[ 105.97] [DIAG] t=229s hb=230 maxgap=1000ms vbat=4.69V heap=166372 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
+[ 108.97] [DIAG] t=232s hb=233 maxgap=1000ms vbat=4.67V heap=166372 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
+[ 109.83] [WiFi] scanning for 2 known network(s), 15000 ms budget...
+[ 118.08] [WiFi] mDNS up — http://okai.local
+[ 118.08] [WiFi] joined "monterAC"  IP=192.168.1.53  http://okai.local  RSSI=-64 dBm
+[ 118.08] [DIAG] t=241s hb=242 maxgap=1000ms vbat=4.67V heap=170072 min=157240 wifi=ON | p1=- p2=- p3=- p4=-
+[ 121.08] [DIAG] t=244s hb=245 maxgap=1000ms vbat=4.67V heap=170292 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
+[ 124.08] [DIAG] t=247s hb=248 maxgap=1000ms vbat=4.67V heap=170644 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
+[ 127.08] [DIAG] t=250s hb=251 maxgap=1000ms vbat=4.67V heap=170644 min=157240 wifi=ON | p1=- p2=# p3=- p4=-
