@@ -44,7 +44,8 @@ static uint32_t  _staLostSince = 0;      // S-7: link first seen down — deboun
 static bool      _apNoEvidence = false;  // F-1: this AP is a fallback, not a decision — retry STA
                                          // once pack frames finally arrive
 static bool      _hadStation   = false;  // a station link succeeded at least once this boot
-static uint8_t   _staRelostTries = 0;    // consecutive no-charger re-join attempts
+static uint32_t  _staRelostAt  = 0;      // when the link was torn down — starts the retry window
+static bool      _staRelostArmed = false;
 static uint32_t  _lastReqMs    = 0;      // G-3: last HTTP request served — tells an idle
                                          // auto-joined phone from someone actually working
 static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
@@ -187,6 +188,19 @@ const char* wifiStateStr() {
     }
 }
 
+// Is anything actually TALKING to us? Not "is the radio on" — that is `wifiActive`.
+//
+// 2026-10-09, the owner's ask: "a green dot means that Wi-Fi is connected either to an
+// access point or to a local network. It doesn't matter. I don't care... If Wi-Fi is on but
+// nothing is connected, then let's make it a red dot." So the two cases that count as
+// connected are a joined station link and an access point with at least one client. An AP
+// that nobody has joined is a radio burning power for no one — red.
+bool wifiLinkUp() {
+    if (_wst == WST_STATION) return WiFi.status() == WL_CONNECTED;
+    if (_wst == WST_AP)      return WiFi.softAPgetStationNum() > 0;
+    return false;
+}
+
 static void _mdnsStart() {
     if (_mdnsUp) return;
     if (MDNS.begin(WIFI_MDNS_NAME)) {
@@ -279,7 +293,7 @@ static bool _wifiTryStation() {
         // charger attached — see the re-join branch in wifiServerLoop(). Reset the attempt
         // counter: this join worked, so the next drop gets a full allowance again.
         _hadStation      = true;
-        _staRelostTries  = 0;
+        _staRelostArmed  = false;   // this join worked; a later drop gets a fresh window
         _serverUp();
         Serial.printf("[WiFi] joined \"%s\"  IP=%s  http://%s.local  RSSI=%d dBm\n",
                       WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
@@ -1066,6 +1080,8 @@ void wifiServerLoop() {
             _wifiAllDown();
             _staLostSince = 0;
             _staRetryAt   = now + WIFI_STA_RETRY_MS;
+            // Start the no-charger retry window here, at the DROP, not at the first retry.
+            if (!_staRelostArmed) { _staRelostArmed = true; _staRelostAt = now; }
         }
     } else if (_wst == WST_STATION) {
         _staLostSince = 0;            // link came back inside the debounce — no teardown
@@ -1099,14 +1115,16 @@ void wifiServerLoop() {
     // attempts; a success resets the allowance. A charger still gets unlimited retries,
     // because that is the dock and he wants it reachable there indefinitely.
     const bool chargeWantsJoin = chargeJoinWorthy(CHG_WIFI_DWELL_MS);
-    const bool relostWantsJoin = _hadStation && _staRelostTries < STA_RELOST_MAX_TRIES;
+    const bool relostWantsJoin = _hadStation && _staRelostArmed &&
+                                 (now - _staRelostAt) < STA_RELOST_WINDOW_MS;
     if (_wst == WST_OFF && !_userForcedOff && !rideSuspected() &&
         (chargeWantsJoin || relostWantsJoin) &&
         wifiHasCreds() && (int32_t)(now - _staRetryAt) >= 0) {
         if (!chargeWantsJoin) {
-            _staRelostTries++;
-            Serial.printf("[WiFi] link was lost - re-join attempt %u of %u (no charger)\n",
-                          (unsigned)_staRelostTries, (unsigned)STA_RELOST_MAX_TRIES);
+            Serial.printf("[WiFi] link was lost %lus ago - rescanning all saved networks "
+                          "(no charger, window %lus)\n",
+                          (unsigned long)((now - _staRelostAt) / 1000UL),
+                          (unsigned long)(STA_RELOST_WINDOW_MS / 1000UL));
         } else {
             Serial.println("[WiFi] charging - (re)trying the home network");
         }

@@ -394,14 +394,21 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // beacon used to force a full deinit/re-init plus a 60 s wait — ~60 cycles/hour at the
 // edge of coverage, which is both pointless churn and the heap-leak path R-11 is about.
 #define STA_LOST_DEBOUNCE_MS  3000UL
-// How many times a DROPPED station link is re-attempted with no charger attached. Each
-// attempt blocks the main loop for up to WIFI_STA_CONNECT_MS, so this is deliberately
-// bounded: 3 tries at WIFI_STA_RETRY_MS apart covers a transient drop (a phone hotspot
-// sleeping while the house network is still in range — exactly what happened on the bench
-// 2026-10-09) without leaving the board scanning every 60 s while parked out of range. A
-// successful join resets the allowance. With a charger attached the retries are unlimited,
-// because that is the dock.
-#define STA_RELOST_MAX_TRIES  3
+// How long a DROPPED station link keeps being re-attempted with no charger attached.
+//
+// 2026-10-09 - this was a count of 3, and the owner's own description of what he does showed
+// that to be wrong: "I'm in the car. I have the hotspot on the phone, and I turn the hotspot
+// off. I bring the hotspot to the garage, where there's the home network. Can it then
+// automatically connect to the home network?" Three tries at 60 s apart is three minutes —
+// shorter than walking from the car to the garage, so the allowance would be spent before
+// the house network was ever in range and the answer would have been no.
+//
+// A WINDOW fits that journey; a count does not. 30 minutes covers the trip with room, and
+// still stops the board scanning every 60 s forever while parked out of range on a beach.
+// Each attempt scans ALL saved networks and joins the strongest in range (WiFiMulti), so
+// arriving home inside the window joins the house network with no action from him. Any
+// success resets it. A charger still gets unlimited retries, because that is the dock.
+#define STA_RELOST_WINDOW_MS  1800000UL   // 30 min
 // An associated AP client only DEFERS the home-network recovery while it is actually being
 // used. The owner's phone auto-joins "OkaiBMS" (predictable name, his decision), and an
 // idle phone in a pocket must not block the recovery for a whole power cycle.
@@ -570,7 +577,8 @@ static inline void fmtAmps(char *buf, size_t n, float amps, uint8_t decimals, co
 extern PackData   packs[NUM_PACKS];    // UART.ino
 extern float      g_ridePowerEma_W;    // UART.ino — EMA fleet discharge power
 extern uint8_t    g_ridePowerN;        // UART.ino — warmup counter (< 3 = not ready)
-extern bool     wifiActive;          // WiFiServer.ino
+extern bool     wifiActive;          // WiFiServer.ino — the RADIO is on
+bool wifiLinkUp();                   // WiFiServer.ino — something is actually CONNECTED
 extern bool     fsReady;             // Logger.ino
 
 // ─── Cross-file function prototypes (PackLabel.ino) ──────────────────────────

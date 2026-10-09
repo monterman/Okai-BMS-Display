@@ -268,12 +268,15 @@ void labelStr(uint8_t port, char *buf, size_t len) {
 // "P3-?" when a pack is talking but the registry has not identified it. That state is real
 // and must be visible: it is exactly when he needs to go and assign a number, and showing a
 // bare "P3" would hide it.
+// 2026-10-09 - SPACES AROUND THE DASH, at the owner's request: "When the numbers are too
+// close together, they're harder to read." He is right and it costs two pixels of a line
+// that has room: "P3 - 6" reads as a port and a pack, "P3-6" reads as one jumbled token.
 void portPackStr(uint8_t port, char *buf, size_t len) {
     if (port >= NUM_PACKS) { snprintf(buf, len, "P?"); return; }
     if (!packs[port].valid) { snprintf(buf, len, "P%u", port + 1); return; }
     uint8_t n = labelGet(port);
-    if (n) snprintf(buf, len, "P%u-%u", port + 1, n);
-    else   snprintf(buf, len, "P%u-?", port + 1);
+    if (n) snprintf(buf, len, "P%u - %u", port + 1, n);
+    else   snprintf(buf, len, "P%u - ?", port + 1);
 }
 
 // ── Session counters ──────────────────────────────────────────────────────────

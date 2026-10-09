@@ -257,6 +257,21 @@ static void drawHeader() {
     _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
     _gfx->print(wstr);
 
+    // 2026-10-09 - LINK DOT, the owner's ask and a good one: "I know at a glance what is
+    // going on with my boogie's Wi-Fi."
+    //   GREEN = something is actually talking to us — a joined home/hotspot network, OR an
+    //           access point with at least one client. He was explicit that he does not care
+    //           which: "It doesn't matter. I don't care."
+    //   RED   = the radio is ON but nothing is connected. That is the state worth seeing,
+    //           because it looks identical to "connected" on every other indicator.
+    //   none  = radio off. A dot would imply the radio is doing something.
+    // Drawn, not printed, so it reads at arm's length where a character would not. Placed
+    // from the measured end of the text so it cannot collide if the mode tag appears.
+    if (wifiActive) {
+        const int16_t dotX = 70 + (int16_t)strlen(wstr) * 6 + 7;   // size-1 glyphs are 6 px
+        _gfx->fillCircle(dotX, 7, 3, wifiLinkUp() ? C_GOOD : C_POOR);
+    }
+
     // 2026-10-06 - This slot used to show "LGT", an indicator for a light FET that was
     // retired when GPIO13 became NeoPixel strip 2. It reported a flag that drove nothing,
     // while the chord that toggled it was silently disabling screen navigation.
