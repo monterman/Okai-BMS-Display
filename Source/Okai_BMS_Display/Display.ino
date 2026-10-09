@@ -225,9 +225,55 @@ static void drawLabelPicker() {
     _gfx->setTextColor(C_DIM);
     _gfx->setCursor(BX + 12,  BY + 92);  _gfx->print("1:next");
     _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(BX + 112, BY + 92);  _gfx->print("2:OK");
+    _gfx->setCursor(BX + 112, BY + 92);  _gfx->print("2:SAVE");
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(BX + 196, BY + 92);  _gfx->print("3:cancel");
+    _gfx->setCursor(BX + 204, BY + 92);  _gfx->print("3:exit");
+}
+
+// ── Overlay: the SELECTION CONFIRMED flash ───────────────────────────────────
+// 2026-10-09 - the owner's point, and it is a real UI defect rather than a nicety:
+// "when I select a pack, I would like the window not to immediately go away, because that
+// means there's no difference between the window going away and me properly selecting a
+// pack... it's easy to change buttons and not know what you just did."
+//
+// Exactly so. SAVE and EXIT both closed the overlay instantly and identically, so the only
+// way to find out whether a number had been stored was to go and look — which is how a
+// control stops being trusted. A green tick held for PICKER_CONFIRM_MS makes the two
+// outcomes impossible to confuse, and it names the number so a mis-press is visible too.
+//
+// Buttons are DEAD while this shows: it is feedback, not another thing to dismiss.
+static void drawPickConfirm() {
+    const int BX = 10, BY = 30, BW = 300, BH = 112;
+    _gfx->fillRect(BX, BY, BW, BH, C_HDR);
+    _gfx->drawRect(BX,     BY,     BW,     BH,     C_GOOD);
+    _gfx->drawRect(BX + 1, BY + 1, BW - 2, BH - 2, C_GOOD);
+
+    // A thick tick, drawn rather than typed — a glyph at this size is thin and grey-ish on
+    // this panel, and the whole point is that it should be unmistakable at arm's length.
+    const int cx = BX + 56, cy = BY + 52;
+    for (int t = -3; t <= 3; t++) {
+        _gfx->drawLine(cx - 26, cy + t,      cx - 6,  cy + 20 + t, C_GOOD);
+        _gfx->drawLine(cx - 6,  cy + 20 + t, cx + 30, cy - 22 + t, C_GOOD);
+    }
+
+    _gfx->setTextSize(2);
+    _gfx->setTextColor(C_GOOD);
+    _gfx->setCursor(BX + 120, BY + 34);
+    char m[20];
+    if (_labelPickVal) snprintf(m, sizeof(m), "PACK %u", (unsigned)_labelPickVal);
+    else               snprintf(m, sizeof(m), "CLEARED");
+    _gfx->print(m);
+
+    _gfx->setTextColor(C_TEXT);
+    _gfx->setCursor(BX + 120, BY + 60);
+    _gfx->print("SAVED");
+
+    _gfx->setTextSize(1);
+    _gfx->setTextColor(C_DIM);
+    _gfx->setCursor(BX + 120, BY + 84);
+    char p[24];
+    snprintf(p, sizeof(p), "on port %u", (unsigned)(_labelPickPort + 1));
+    _gfx->print(p);
 }
 
 // ── Onboard 18650 battery sense ───────────────────────────────────────────────
@@ -1169,6 +1215,10 @@ static void enforceHomePolicy(uint32_t now) {
 
 // Open the label picker for a specific port, pre-filled with its current number.
 #define PICKER_GRACE_MS 400UL   // ignore button edges for this long after the picker opens
+// How long the green tick is held after a SAVE. Long enough to be unmistakable, short
+// enough that it never feels like another dialog to get out of.
+#define PICKER_CONFIRM_MS 1100UL
+static uint32_t _pickConfirmedAt = 0;   // non-zero while the confirmation flash is showing
 static void openLabelPicker(uint8_t port, uint32_t now) {
     if (port >= NUM_PACKS) return;
     _showLabelPick  = true;
@@ -1244,6 +1294,20 @@ void displayLoop() {
 
     // ── Overlay: label picker
     if (_showLabelPick) {
+        // The confirmation flash owns the overlay while it runs: no button does anything,
+        // because it is feedback and not another prompt to answer.
+        if (_pickConfirmedAt) {
+            if ((now - _pickConfirmedAt) >= PICKER_CONFIRM_MS) {
+                _pickConfirmedAt = 0;
+                _showLabelPick   = false;
+                _dispLast        = 0;        // force a full redraw of whatever is underneath
+            } else {
+                drawPickConfirm();
+                _canvas->flush();
+                _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;   // swallow edges, no latching
+                return;
+            }
+        }
         // Nothing counts during the grace window - see openLabelPicker().
         const bool pickReady = (now - _overlayShownMs) > PICKER_GRACE_MS;
         if (pickReady && _b1Prev == HIGH && b1 == LOW && (now - _b1Ts) > DEBOUNCE_MS) {
@@ -1255,8 +1319,12 @@ void displayLoop() {
             Serial.printf("[DISP] picker CONFIRM port%u = #%u\n",
                           _labelPickPort + 1, (unsigned)_labelPickVal);
             labelSet(_labelPickPort, _labelPickVal);
-            _showLabelPick = false;
-            _dispLast = 0;  // force immediate full redraw on dismiss
+            // Hold the overlay open and show the tick instead of vanishing. Also push the
+            // idle timeout out, or a confirm late in the overlay's life could be closed by
+            // enforceHomePolicy() mid-flash and logged as "TIMED OUT (no change)" — which
+            // would be the opposite of what happened.
+            _pickConfirmedAt = now;
+            _overlayShownMs  = now;
         }
         if (pickReady && _b3Prev == HIGH && b3 == LOW && (now - _b3Ts) > DEBOUNCE_MS) {
             _b3Ts = now;
