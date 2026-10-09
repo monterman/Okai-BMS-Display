@@ -37,6 +37,8 @@ static WifiState _wst          = WST_OFF;
 static uint32_t  _wstSince     = 0;      // when we entered JOINING
 static uint32_t  _staRetryAt   = 0;      // do not re-attempt a failed join before this
 static uint32_t  _staLostSince = 0;      // S-7: link first seen down — debounce, not a hair trigger
+static bool      _apNoEvidence = false;  // F-1: this AP is a fallback, not a decision — retry STA
+                                         // once pack frames finally arrive
 static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
 static bool      _mdnsUp       = false;
 // 2026-10-06 - A LIST of networks, not one, and WiFiMulti to choose between them.
@@ -132,6 +134,10 @@ static void _wifiAllDown() {
     WiFi.mode(WIFI_OFF);
     wifiActive = false;
     _wst = WST_OFF;
+    // Hygiene: clear the debounce timer here rather than leaving it stale across a
+    // teardown. Benign either way (a stale value only skips one debounce), but a timer
+    // that outlives the state it describes is how the G-4 class of bug starts.
+    _staLostSince = 0;
 }
 
 static void _wifiStartAP() {
@@ -851,11 +857,14 @@ void wifiServerLoop() {
     // every 60 s, each time blocking the loop for up to 15 s in _multi.run(). The 30 s
     // dwell below is what fixes that, NOT a current test: a current test would also go
     // false through the whole taper and strand the owner at the dock with no link.
-    // INITIATING a join is gated harder than HOLDING one: chargerPresentFor() adds a 30 s
-    // dwell so a chattering or momentarily-asserted bit cannot trigger a 15 s blocking
-    // scan. Holding the radio up uses the bare bit, so the taper never drops the link.
+    // INITIATING a join is gated harder than HOLDING one: chargeJoinWorthy() requires the
+    // bit, REAL charge current at some point in this run, AND a 30 s dwell. The current
+    // requirement is the one that matters - a dwell alone separates a chattering bit from a
+    // steady one, and pack #1's fault is a STEADY bit whose dwell matured hours ago, so
+    // without it a long coast could still fire a 15 s scan mid-session. Holding the radio up
+    // uses the bare bit, so the CV taper never drops the link.
     if (_wst == WST_OFF && !_userForcedOff && !rideSuspected() &&
-        chargerPresentFor(CHG_WIFI_DWELL_MS) &&
+        chargeJoinWorthy(CHG_WIFI_DWELL_MS) &&
         wifiHasCreds() && (int32_t)(now - _staRetryAt) >= 0) {
         Serial.println("[WiFi] charging - (re)trying the home network");
         _staRetryAt = now + WIFI_STA_RETRY_MS;
@@ -929,13 +938,48 @@ void wifiServerLoop() {
             // The AP is the right fallback: no scan, no 15 s block, nothing to starve. And
             // the ride shutdown above is now unconditional, so the instant any discharge
             // appears this comes straight back down.
-            Serial.println("[WiFi] boot join: no ride evidence either way - starting AP "
-                           "(no scan, no blocking join)");
-            _wifiStartAP();
+            // F-4: gate the fallback on rideEverSeen(). Without it, a mid-ride reboot with
+            // PERFECTLY HEALTHY telemetry also raised an AP — bootJoinSafe() fails on the
+            // discharge latch for the whole 5-30 s window and routes straight here. On the
+            // throttle that was killed on the next pass; coasting it was up to 60 s of AP
+            // mid-ride. With the test, the with-telemetry case is gone entirely. The
+            // zero-telemetry case stays, and is irreducible for a telemetry-derived gate.
+            if (rideEverSeen()) {
+                Serial.println("[WiFi] boot join ABANDONED - this board has seen the "
+                               "vehicle discharge (SOP-038)");
+            } else {
+                Serial.println("[WiFi] boot join: no ride evidence either way - starting AP "
+                               "(no scan, no blocking join)");
+                _apNoEvidence = true;
+                _wifiStartAP();
+            }
         } else if (now > BOOT_JOIN_EARLIEST_MS && bootJoinSafe()) {
             _bootJoinPending = false;
             _wifiStartAuto();
         }
+    }
+
+    // F-1 - THE NO-EVIDENCE AP IS A FALLBACK, NOT A DECISION.
+    //
+    // Booting with no pack attached cannot satisfy bootJoinSafe(), so the deadline above
+    // raises the AP. But _wifiStartAP() sets _wst = WST_AP, and the charge-start station
+    // join requires WST_OFF — and with a charger attached the bare bit re-arms the window
+    // forever, so the AP never closes to free _wst. Net effect: the board never tried
+    // okai.local again for the whole power cycle, stored credentials and a healthy router
+    // notwithstanding. That is B-4's own complaint ("plugging a pack in afterwards did not
+    // help") left unfixed, and it would have looked like success while home WiFi — the
+    // owner's headline requirement — silently failed.
+    //
+    // So: the moment real pack frames arrive we can finally judge, and we judge. Not while
+    // someone is actually USING the AP, because that is the registry rebuild and pulling
+    // the network out from under it would be worse than the thing being fixed.
+    if (_apNoEvidence && _wst == WST_AP && packFramesSeen() && !rideEverSeen() &&
+        !_userForcedOff && wifiHasCreds() && WiFi.softAPgetStationNum() == 0) {
+        _apNoEvidence = false;
+        Serial.println("[WiFi] pack frames arrived - the fallback AP can judge now, "
+                       "trying the home network");
+        _wifiAllDown();
+        _wifiStartAuto();
     }
 
     if (wifiActive) _srv.handleClient();

@@ -996,7 +996,12 @@ uint8_t packRegistryForgetAll(void) {
     // rebuild: the leftovers are the blended-history records the rebuild exists to destroy.
     // 32 covers 8 packs plus every _2.._9 collision name. packRegistryCount() below lets
     // the caller state plainly whether anything is left.
-    char   victims[32][40];
+    // F-5: static, not stack. 32x40 is 1,280 B and this runs inside
+    // _srv.handleClient() on the 8 KB loopTask stack, on the one path the owner
+    // deliberately exercises twice during a rebuild. An overflow there is a panic
+    // reboot, and under K-1 a reboot stops the keep-alive. One call site, single
+    // threaded, so static is free - and it shows up honestly in the RAM figure.
+    static char victims[32][40];
     uint8_t nv = 0;
     File dir = LittleFS.open("/packs");
     if (dir && dir.isDirectory()) {

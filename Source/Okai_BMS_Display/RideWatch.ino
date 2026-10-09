@@ -60,24 +60,53 @@ static uint32_t sRwLastLoadMs  = 0;   // last pass on which any pack moved real 
 static bool     sRwEverLoaded  = false;
 static bool     sRwSeenFrame   = false;   // at least one valid pack frame since boot
 static bool     sRwDischSeen   = false;   // any discharge at all since boot (M-4 boot gate)
-static uint32_t sRwChgSince    = 0;   // first pass of the current unbroken charger-bit run
-static bool     sRwChgPresent  = false;
+// ── Charger runs are tracked PER PACK, and absent telemetry BRIDGES them ─────
+// 2026-10-09 (round 3) - the first version of this was a single OR across all packs,
+// reset by any pass without a charger-asserting fresh frame. Two faults, both silent:
+//
+//   * The owner charges packs INDIVIDUALLY (the 2026-10-06 session is pack #1 alone).
+//     An OR plus a global reset meant one pack's >5 s frame gap zeroed a 30 s dwell —
+//     and idle packs legitimately drop frames, with an unbounded tail. If gaps recur
+//     more often than every 30 s the dwell NEVER matures, the join never fires, and
+//     nothing on serial explains why he cannot reach the display at the dock.
+//   * Treating a missing frame as evidence the charger is GONE is the same mistake as
+//     deriving the ride gate from the logger: absence of evidence read as evidence of
+//     absence. The codebase already draws this distinction with Stale / Age_ms.
+//
+// So: a run breaks only on POSITIVE evidence — a fresh frame from that pack with the
+// bit CLEAR. No fresh frame at all bridges the run and holds its state.
+static uint32_t sRwChgSince[NUM_PACKS]   = { 0 };
+static bool     sRwChgPresent[NUM_PACKS] = { false };
+static bool     sRwChgCurrSeen[NUM_PACKS] = { false };  // real charge current seen in THIS run
 
 // Call from loop(), EVERY pass, straight after uartLoop() so it sees fresh frames.
 void rideWatchUpdate() {
     const uint32_t now = millis();
-    bool chgSeenThisPass = false;
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (!packs[i].valid) continue;
-        if ((now - packs[i].lastUpdateMs) > PACK_CONNECTED_MS) continue;  // stale frame
+        if ((now - packs[i].lastUpdateMs) > PACK_CONNECTED_MS) continue;  // stale → bridge
         sRwSeenFrame = true;
 
-        // The charger BIT, independent of current. This is what holds the radio up for a
-        // whole charge - see chargerPresent() for why the bit and not the current.
-        if (packs[i].chargerDetected) chgSeenThisPass = true;
-
         float a = packs[i].current;
+
+        // Charger run for THIS pack, from a fresh frame only.
+        if (packs[i].chargerDetected) {
+            if (!sRwChgPresent[i]) {
+                sRwChgPresent[i]  = true;
+                sRwChgSince[i]    = now;
+                sRwChgCurrSeen[i] = false;
+            }
+            // Real current going IN, at some point during this run. This is what tells a
+            // genuine charge from pack #1's fault — charger detected, +0.000 A, 2 h 12 min.
+            if (!rwIsPlaceholder(a) && a > kBalanceCurrentA) sRwChgCurrSeen[i] = true;
+        } else {
+            // POSITIVE evidence the charger is gone on this pack: a fresh frame, bit clear.
+            sRwChgPresent[i]  = false;
+            sRwChgSince[i]    = 0;
+            sRwChgCurrSeen[i] = false;
+        }
+
         if (rwIsPlaceholder(a)) continue;
 
         if (a < -LOG_RIDE_THRESHOLD_A) {          // real discharge → riding
@@ -92,14 +121,6 @@ void rideWatchUpdate() {
         }
     }
 
-    // Dwell timer on the charger bit: sRwChgSince marks the start of the current unbroken
-    // run of passes in which SOME pack asserted it. Any pass without it resets the run.
-    if (chgSeenThisPass) {
-        if (!sRwChgPresent) { sRwChgPresent = true; sRwChgSince = now; }
-    } else {
-        sRwChgPresent = false;
-        sRwChgSince   = 0;
-    }
 }
 
 // ── Queries: pure reads, safe to call anywhere ───────────────────────────────
@@ -138,13 +159,38 @@ bool rideEverSeen() { return sRwDischSeen; }
 // computed from discharge current and is fully independent of the bit, so pack #1's
 // stuck-bit fault cannot defeat it — it can only keep the radio up on a stationary
 // vehicle, which is harmless and is what the owner asked for.
-bool chargerPresent() { return sRwChgPresent; }
-
-// Same, but held for at least `ms`. Used before INITIATING a join, so a chattering bit
-// or a momentary assert cannot trigger a 15 s blocking scan.
-bool chargerPresentFor(uint32_t ms) {
-    return sRwChgPresent && (millis() - sRwChgSince) >= ms;
+bool chargerPresent() {
+    for (uint8_t i = 0; i < NUM_PACKS; i++) if (sRwChgPresent[i]) return true;
+    return false;
 }
+
+// What it takes to INITIATE a join (as opposed to holding one up). Three requirements,
+// and the middle one is the important one:
+//
+//   1. a charger run is open on some pack,
+//   2. REAL CHARGE CURRENT was seen at least once during that run, and
+//   3. the run has lasted `ms`.
+//
+// 2026-10-09 (round 3) - requirement 2 replaces a bare dwell, which did NOT do the job it
+// was added for. A dwell separates a CHATTERING bit from a steady one; pack #1's fault is
+// a STEADY bit, latched for hours, so its dwell matured long ago. Without (2), a coast
+// longer than the 2 min ride hysteresis let the charge-start branch fire a 15 s blocking
+// scan mid-session on a vehicle that was being ridden.
+//
+// Requirement 2 is safe for the owner's real case: a working charger shows current within
+// seconds, and HOLDING the link still uses the bare bit (chargerPresent()), so the CV
+// taper — tens of milliamps, longer than the bulk phase — never drops it.
+bool chargeJoinWorthy(uint32_t ms) {
+    for (uint8_t i = 0; i < NUM_PACKS; i++) {
+        if (!sRwChgPresent[i] || !sRwChgCurrSeen[i]) continue;
+        if ((millis() - sRwChgSince[i]) >= ms) return true;
+    }
+    return false;
+}
+
+// Have we ever had a valid, fresh pack frame? The boot-join gate needs this, and so does
+// the recovery path for an AP that came up only because no evidence existed yet.
+bool packFramesSeen() { return sRwSeenFrame; }
 
 // Sleep interlock: has any pack moved real current recently? A rider on the water has
 // packs under load; sleeping there halts the keep-alive and the packs cut output 5 s

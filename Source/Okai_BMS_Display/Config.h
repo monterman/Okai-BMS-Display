@@ -542,7 +542,8 @@ bool chargeActive();          // charger attached AND current actually going in
 bool bootJoinSafe();          // positive evidence no ride is running — boot-join gate
 bool rideEverSeen();          // any discharge since boot — no-telemetry backstop
 bool chargerPresent();        // charger BIT only — THIS is the WiFi gate, not chargeActive()
-bool chargerPresentFor(uint32_t ms);   // ...held for a dwell, before INITIATING a join
+bool chargeJoinWorthy(uint32_t ms);    // bit + REAL current seen in this run + dwell
+bool packFramesSeen();        // any valid fresh pack frame since boot
 
 // ─── Cross-file function prototypes (PackRegistry.ino) ───────────────────────
 extern PackRecord packRec[NUM_PACKS];
