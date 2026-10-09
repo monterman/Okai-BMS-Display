@@ -6,7 +6,7 @@
 // the only thing that caught it was Bremote3 reading the banner on a bench capture. The
 // hashes and the new behaviour are what prove which build is on the board; this string proves
 // nothing until it is maintained. Bump it in the SAME commit as any behaviour change.
-#define FW_VERSION "0.3.3"
+#define FW_VERSION "0.3.4"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4
