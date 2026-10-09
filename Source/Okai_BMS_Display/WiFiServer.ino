@@ -285,6 +285,16 @@ static bool _wifiTryStation() {
     // blocking scan ahead of it defaults to a 60 s timeout — so without this the worst-case
     // main-loop block is over a minute, not the 8 s the budget implies.
     WiFi.setScanTimeout(WIFI_SCAN_TIMEOUT_MS);
+    // ...and clear any stale scan state before asking for another one. Capping the scan
+    // created this: on timeout, scanNetworks() returns while WIFI_SCANNING_BIT is still set,
+    // and _wifiAllDown()'s WiFi.mode(WIFI_OFF) then aborts the scan — so the SCAN_DONE event
+    // that is the ONLY thing clearing that bit may never arrive. Nothing in the core clears
+    // it on STA disable or a mode change. Every later run() would then hit the early return
+    // and fail instantly, forever: home WiFi dead for the whole power cycle, needing a
+    // reboot. scanDelete() unconditionally clears both status bits, scanNetworks() calls it
+    // internally anyway, and _scanDone() guards itself against a late event — so this is
+    // free and it makes the early-return guard unreachable.
+    WiFi.scanDelete();
     _multi.APlistClean();
     for (uint8_t i = 0; i < _netCount; i++)
         _multi.addAP(_nets[i].ssid, _nets[i].pass[0] ? _nets[i].pass : nullptr);

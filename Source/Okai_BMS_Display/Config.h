@@ -384,8 +384,11 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 //
 // Consequence to expect, and it is logged rather than hidden: a >10 s block does invalidate
 // packs, and the recovery edge re-registers them — which zeroes session Wh accounting for
-// that session. Acceptable because this path only runs after a dropped link, never during a
-// ride (120 s hysteresis) and never during the deliberate registry rebuild.
+// that session. Acceptable because this path only runs after a dropped link, and not during
+// a ride that is drawing current within the 120 s hysteresis. That last clause is deliberate
+// and weaker than it first reads: a coast longer than the hysteresis defeats
+// rideSuspected(), which is the irreducible gap M-4/F-4 already document. Claiming "never
+// during a ride" would be the same species of overclaim as the corrected R-3 comment above.
 #define WIFI_STA_CONNECT_MS   8000UL   // ASSOCIATION budget only — the scan is extra
 #define WIFI_SCAN_TIMEOUT_MS  6000UL   // caps WiFiScan's 60 s default, bounding the worst case
 #define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router
