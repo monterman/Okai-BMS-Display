@@ -770,8 +770,13 @@ static void drawScreenDetail() {
     _gfx->setCursor(4, 22);
     char plabel[10]; portPackStr(i, plabel, sizeof(plabel));
     _gfx->print(plabel);
+    // 2026-10-09 (R-8) - dots moved right, 36 -> 60. The label beside them grew from "P4"
+    // (ends x=15) to "P4 - 8" (6 glyphs x 6 px from x=4, ends x=39), and the first dot sat
+    // at dx=36 r=4, i.e. x=32..40 in the same y band — overlapping the text. Cosmetic, but
+    // the thing it obscured is the indicator showing WHICH pack this screen is displaying,
+    // on the one screen where BTN1 cycles packs.
     for (uint8_t d = 0; d < NUM_PACKS; d++) {
-        uint16_t dx = 36 + d * 14;
+        uint16_t dx = 60 + d * 14;
         if (d == i) _gfx->fillCircle(dx, 25, 4, C_ACCENT);
         else        _gfx->drawCircle(dx, 25, 4, C_DIM);
     }
@@ -1226,6 +1231,18 @@ static void openLabelPicker(uint8_t port, uint32_t now) {
     _labelPickVal   = labelGet(port);
     _overlayShownMs = now;
     _dispLast       = 0;
+    // 2026-10-09 (R-6) - CLEAR THE CONFIRM LATCH ON EVERY OPEN. I added _pickConfirmedAt
+    // and left two paths that can leave it set while _showLabelPick is already false:
+    //   (a) BTN2 and BTN3 falling edges on the SAME pass — the confirm arms the flash, then
+    //       the dismiss branch immediately clears _showLabelPick;
+    //   (b) the flash-expiry branch fell THROUGH into the still-live button checks (no
+    //       return), where a BTN2 edge re-armed the latch with the overlay already closed —
+    //       and called labelSet() a second time, i.e. two more flash writes.
+    // Either way the NEXT picker open would close instantly and silently, burning the
+    // one-shot ambiguity prompt with nothing drawn and nothing logged — the same class of
+    // bug as the 2026-10-06 "burned the single prompt" failure that the prev=LOW seeding
+    // below exists to stop. Clearing it here makes the latch unreachable however it was set.
+    _pickConfirmedAt = 0;
     // 2026-10-06 - Force a genuine release-then-press. The picker used to honour the button
     // state from BEFORE it opened, so one leftover or noisy edge confirmed the pre-filled
     // "--" and burned the single prompt for that pack. Reproduced 2/2 boots on 2026-10-05:
@@ -1301,6 +1318,12 @@ void displayLoop() {
                 _pickConfirmedAt = 0;
                 _showLabelPick   = false;
                 _dispLast        = 0;        // force a full redraw of whatever is underneath
+                // R-6, belt and braces: RETURN rather than falling through. Without this the
+                // expiry pass ran on into the button checks below with pickReady still true
+                // (PICKER_CONFIRM_MS 1100 > PICKER_GRACE_MS 400), so a BTN2 edge on that very
+                // pass re-armed the latch and double-called labelSet().
+                _b1Prev = b1; _b2Prev = b2; _b3Prev = b3;
+                return;
             } else {
                 drawPickConfirm();
                 _canvas->flush();

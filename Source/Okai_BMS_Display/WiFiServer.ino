@@ -281,6 +281,10 @@ static bool _wifiTryStation() {
     //   mDNS (started in _mdnsStart) answers okai.local, which Windows and Apple resolve
     //     natively and Android frequently does not.
     WiFi.setHostname(WIFI_MDNS_NAME);
+    // R-3: cap the scan. WiFiMulti::run()'s budget covers only the association, and the
+    // blocking scan ahead of it defaults to a 60 s timeout — so without this the worst-case
+    // main-loop block is over a minute, not the 8 s the budget implies.
+    WiFi.setScanTimeout(WIFI_SCAN_TIMEOUT_MS);
     _multi.APlistClean();
     for (uint8_t i = 0; i < _netCount; i++)
         _multi.addAP(_nets[i].ssid, _nets[i].pass[0] ? _nets[i].pass : nullptr);
@@ -1111,11 +1115,28 @@ void wifiServerLoop() {
     // Why it is BOUNDED rather than unlimited: each attempt blocks the main loop for up to
     // WIFI_STA_CONNECT_MS, stalling pack reads and the display. Retrying forever would mean
     // an 8 s stall every 60 s for as long as the board is out of range — e.g. parked on the
-    // beach between rides, packs idle, nothing charging. So a drop buys STA_RELOST_MAX_TRIES
-    // attempts; a success resets the allowance. A charger still gets unlimited retries,
-    // because that is the dock and he wants it reachable there indefinitely.
+    // beach between rides, packs idle, nothing charging. So a drop opens a
+    // STA_RELOST_WINDOW_MS window — 30 min, sized to the car-to-garage walk rather than to
+    // a try count, because a count of 3 expired before the house network was ever in range.
+    // Any success resets it; the window lapses explicitly just below. A charger still gets
+    // unlimited retries, because that is the dock and he wants it reachable there
+    // indefinitely. Station-only on this path, with NO AP fallback — see R-1/R-2 below.
+    // R-7: let the window LAPSE explicitly rather than leaving the flag set forever. A flag
+    // that outlives the state it describes is how the G-4 class of bug starts — and here it
+    // is concrete: after millis() rolls over (~49.7 days) `now - _staRelostAt` wraps small
+    // and would re-open a window that expired weeks earlier.
+    if (_staRelostArmed && (now - _staRelostAt) >= STA_RELOST_WINDOW_MS) {
+        _staRelostArmed = false;
+        Serial.println("[WiFi] re-join window expired - will wait for a charge or a reboot");
+    }
     const bool chargeWantsJoin = chargeJoinWorthy(CHG_WIFI_DWELL_MS);
-    const bool relostWantsJoin = _hadStation && _staRelostArmed &&
+    // R-5: packFramesSeen() is the telemetry backstop every other auto-raise path has and
+    // this one did not. With no telemetry at all `rideSuspected()` is trivially false, so
+    // `!rideSuspected()` passes VACUOUSLY — a board with a pulled pack or a loose UART would
+    // fire blocking joins with the ride interlock blind. Deliberately NOT !rideEverSeen():
+    // that latches on the first discharge and would kill this feature for the whole power
+    // cycle, which is precisely the drive-home case it exists for.
+    const bool relostWantsJoin = _hadStation && _staRelostArmed && packFramesSeen() &&
                                  (now - _staRelostAt) < STA_RELOST_WINDOW_MS;
     if (_wst == WST_OFF && !_userForcedOff && !rideSuspected() &&
         (chargeWantsJoin || relostWantsJoin) &&
@@ -1129,7 +1150,36 @@ void wifiServerLoop() {
             Serial.println("[WiFi] charging - (re)trying the home network");
         }
         _staRetryAt = now + WIFI_STA_RETRY_MS;
-        _wifiStartAuto();
+        if (chargeWantsJoin) {
+            _wifiStartAuto();          // dock: the AP fallback IS wanted here
+        } else {
+            // 2026-10-09 (R-1/R-2) - THE RELOST PATH MUST NOT RAISE AN AP, and reusing
+            // _wifiStartAuto() did exactly that, because its contract is "try station, else
+            // AP". Two consequences, both worse than the problem this feature fixes:
+            //
+            //  R-1: every failed attempt brought up the radio, the WebServer and mDNS, held
+            //  them for the 60 s window, then tore them all down - about 26 full cycles per
+            //  30-minute window, radio up ~88% of it. That is the per-cycle heap churn that
+            //  diagLoop()'s own comment flags as UNMEASURED, multiplied ~13x over the ~2
+            //  cycles the bench actually exercised. The only route from this delta to a
+            //  stopped keep-alive is an OOM reboot, and this was the path to it.
+            //
+            //  R-2: worse, that AP could LATCH FOREVER. _wifiStartAP() does not set
+            //  _apNoEvidence, so the F-1 recovery cannot fire; and with the owner's phone
+            //  auto-joining the predictable "OkaiBMS", the apClient branch re-arms _wstSince
+            //  indefinitely, so _wst never returns to WST_OFF and no further re-join is
+            //  possible. The feature written to stop WiFi dying until reboot could instead
+            //  guarantee it - in the HOME scenario, not some corner.
+            //
+            // Station-only, and _wifiAllDown() on failure is NOT optional:
+            // _wifiTryStation()'s failure path only calls WiFi.disconnect(true) and leaves
+            // the interface in WIFI_STA with _wst already OFF - which is M-3, the "radio
+            // left powered and scanning while both shutdown paths need _wst != WST_OFF" bug
+            // this file has already fixed once.
+            _bootJoinPending = false;  // the same retirement _wifiStartAuto() does (G-1)
+            _wstSince        = millis();
+            if (!_wifiTryStation()) _wifiAllDown();
+        }
     }
 
     // The window closes. The ONLY outcome that shuts WiFi down is "no network and no

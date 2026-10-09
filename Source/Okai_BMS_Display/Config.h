@@ -365,16 +365,29 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // PSRAM claim I had not checked. `psram=` and `iram=` are now on every [DIAG] line so this
 // is never argued from a comment again.
 #define WIFI_MAX_NETS         4        // a LIST of networks; WiFiMulti joins the strongest
-// 2026-10-09 - 15000 -> 8000, and the number that forces it is not WiFi's at all.
-// UART.ino:119 invalidates a pack after 10 s with no frame. _multi.run() BLOCKS the main
-// loop for its whole budget, so a 15 s scan guarantees every pack is marked invalid: false
-// "#### PACK LOST" rows in the log, and - the part that matters - rideWatchUpdate() sees no
-// valid frames at all, so the SOP-038 interlocks go BLIND exactly while the radio comes up.
-// Measured on the bench 2026-10-09: a real join took 8.3 s and PACK2 went quiet for
-// 9072 ms, i.e. it came in under the 10 s invalidation by less than a second. That was luck,
-// not margin. 8000 keeps the whole blocking window inside pack validity with room to spare.
-// A join that needs longer than 8 s is one the AP fallback should handle anyway.
-#define WIFI_STA_CONNECT_MS   8000UL   // scan+join budget; MUST stay under UART's 10 s invalidate
+// 2026-10-09 - 15000 -> 8000. Better, but READ THE CORRECTION BELOW: this constant does NOT
+// bound the blocking window, and an earlier version of this comment claimed it did.
+//
+// Why it was lowered: UART.ino:119 invalidates a pack after 10 s with no frame, and
+// _multi.run() blocks the whole main loop. A long block therefore marks every pack invalid —
+// false "#### PACK LOST" rows, and rideWatchUpdate() seeing no valid frames at all, so the
+// SOP-038 interlocks go blind exactly while the radio comes up. Bench 2026-10-09: a real
+// join took 8.3 s and PACK2 went quiet for 9072 ms, inside the 10 s by under a second.
+//
+// 🔴 THE CORRECTION (audit R-3). `WiFiMulti::run(t)` bounds only the ASSOCIATION wait. It
+// first performs a BLOCKING `WiFi.scanNetworks()` that `t` does not bound at all
+// (WiFiMulti.cpp:176; the association wait is at :348). So the real block is
+// scan + association, typically ~12-13 s, not 8. It is an improvement on 15000 and it is
+// NOT the invariant the old comment asserted. WIFI_SCAN_TIMEOUT_MS below caps the
+// pathological tail (the library default is 60 s); the only real fix is a non-blocking join,
+// which is deferred on purpose rather than rewritten on a commit that ships.
+//
+// Consequence to expect, and it is logged rather than hidden: a >10 s block does invalidate
+// packs, and the recovery edge re-registers them — which zeroes session Wh accounting for
+// that session. Acceptable because this path only runs after a dropped link, never during a
+// ride (120 s hysteresis) and never during the deliberate registry rebuild.
+#define WIFI_STA_CONNECT_MS   8000UL   // ASSOCIATION budget only — the scan is extra
+#define WIFI_SCAN_TIMEOUT_MS  6000UL   // caps WiFiScan's 60 s default, bounding the worst case
 #define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router
 #define WIFI_ON_WINDOW_MS     60000UL  // owner's spec: 60 s reachable after every power-on
 #define WIFI_MDNS_NAME        "okai"   // http://okai.local, and the router learns "okai"
