@@ -1,7 +1,12 @@
 #pragma once
 
 // ─── Firmware version ────────────────────────────────────────────────────────
-#define FW_VERSION "0.3.0"
+// 2026-10-09 - bumped only AFTER 0.3.3 was already flashed, because I forgot it: the boot
+// banner on the flashed board reads "0.3.0" while running 0.3.3. Harmless but misleading, and
+// the only thing that caught it was Bremote3 reading the banner on a bench capture. The
+// hashes and the new behaviour are what prove which build is on the board; this string proves
+// nothing until it is maintained. Bump it in the SAME commit as any behaviour change.
+#define FW_VERSION "0.3.3"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4
@@ -339,8 +344,26 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // own g_hbMaxGap proof before it is trusted.
 // Ported from foilIQ's proven WifiXfer pattern. SEQUENTIAL, never AP+STA concurrently:
 // APSTA allocates both control blocks, and Espressif put station mode alone at ~45 kB of
-// heap with APSTA "a lot of RAM". No PSRAM here and a ~106 kB framebuffer already in
-// internal DRAM, so an OOM reboot - which stops the keep-alive - is the real risk.
+// heap with APSTA "a lot of RAM". An OOM reboot stops the keep-alive, so it is the real risk.
+//
+// 🔴 2026-10-09 - MY STATED REASON FOR THIS WAS PROBABLY WRONG. This comment used to read
+// "No PSRAM here and a ~106 kB framebuffer already in internal DRAM". The board definition
+// says otherwise: `lilygo_t_display_s3.build.psram_type=opi` with
+// `memory_type={build.boot}_{build.psram_type}` and **no PSRAM menu option at all**, so OPI
+// PSRAM is compiled in unconditionally for this board. The ROM banner on the bench confirms
+// the silicon: "Embedded PSRAM 8MB (AP_3v3)". Display.ino:24 has said "framebuffer in PSRAM"
+// all along - the two comments contradicted each other and I propagated the wrong one into
+// an architectural justification.
+//
+// Free heap reading ~221 kB rather than megabytes means PSRAM is NOT merged into the default
+// heap, so it is reachable via ps_malloc / MALLOC_CAP_SPIRAM only - which is exactly how
+// Arduino_Canvas allocates. So the framebuffer is very likely NOT in internal DRAM.
+//
+// THE DECISION STANDS, on a different and measured basis: with the AP up, internal free heap
+// fell to 167,528 B (bench, 2026-10-09) and APSTA's cost is unmeasured on this board. Staying
+// sequential is justified by that headroom and by foilIQ's field-proven pattern - not by a
+// PSRAM claim I had not checked. `psram=` and `iram=` are now on every [DIAG] line so this
+// is never argued from a comment again.
 #define WIFI_MAX_NETS         4        // a LIST of networks; WiFiMulti joins the strongest
 #define WIFI_STA_CONNECT_MS   15000UL  // scan+join budget before falling back to AP
 #define WIFI_STA_RETRY_MS     60000UL  // after a drop or failure, do not hammer the router

@@ -114,9 +114,20 @@ void diagLoop() {
     // one that matters: it is the low-water mark since boot, so a downward trend over a soak
     // is the leak, whereas free heap alone just bounces. Soak a 2 h charge with the router
     // OFF (forces the retry path every 60 s) and watch minfree.
-    Serial.printf("[DIAG] t=%lus hb=%lu maxgap=%lums vbat=%.2fV heap=%lu min=%lu wifi=%s | p1=%c p2=%c p3=%c p4=%c\n",
+    // 2026-10-09 - psram= and iram= added, because the first bench capture could not answer
+    // "is PSRAM in use?" at all: the [DISP] line that reports it prints before a serial
+    // monitor can be attached, so it is invisible unless the capture starts at t=0. That
+    // question is load-bearing - the whole reason WiFi is sequential STA-then-AP rather than
+    // APSTA is a stated premise that the ~106 kB framebuffer sits in internal DRAM because
+    // there is no PSRAM. A number on every DIAG line costs nothing and settles it forever.
+    // iram= is the one that actually predicts an OOM reboot: largest free INTERNAL block,
+    // which fragmentation kills long before total free heap looks bad.
+    Serial.printf("[DIAG] t=%lus hb=%lu maxgap=%lums vbat=%.2fV heap=%lu min=%lu iram=%lu "
+                  "psram=%lu/%lu wifi=%s | p1=%c p2=%c p3=%c p4=%c\n",
                   (unsigned long)(now / 1000), (unsigned long)g_hbCount, (unsigned long)gap, vbat,
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
+                  (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned long)ESP.getFreePsram(), (unsigned long)ESP.getPsramSize(),
                   wifiActive ? "ON" : "off",
                   wasUp[0] ? '#' : '-', wasUp[1] ? '#' : '-', wasUp[2] ? '#' : '-', wasUp[3] ? '#' : '-');
 }
