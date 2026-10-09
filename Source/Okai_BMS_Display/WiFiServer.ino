@@ -100,6 +100,29 @@ static bool wifiNetAdd(const char* ssid, const char* pass) {
     return wifiNetsSave();
 }
 
+// ── Clamped HTML append ──────────────────────────────────────────────────────
+// 2026-10-09 - WHY THIS EXISTS. snprintf returns the length it WOULD have written, not
+// the length it wrote. So `used += snprintf(buf + used, cap - used, ...)` walks the cursor
+// PAST the end of the buffer the moment anything truncates — and because the size argument
+// is unsigned, `cap - used` then underflows to an enormous value. The next call gets an
+// out-of-bounds pointer and an effectively unbounded limit: stack corruption, on a page
+// served over HTTP.
+//
+// This is R-5 from the 2026-10-06 audit ("clamp the snprintf return before the memcpy",
+// in packRegistryList). I wrote the same bug again three days later in the /wifi list
+// builder. So it is a helper now rather than an idiom to re-type: the only cursor
+// arithmetic in this file happens in here, clamped to what was ACTUALLY written.
+static void _htmlAppend(char* buf, size_t cap, size_t* used, const char* fmt, ...) {
+    if (!buf || !used || cap == 0 || *used + 1 >= cap) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + *used, cap - *used, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;                       // encoding error: the cursor does not move
+    const size_t room = cap - *used - 1;     // -1 preserves room for the NUL
+    *used += ((size_t)n > room) ? room : (size_t)n;
+}
+
 bool wifiHasCreds() { return _netCount > 0; }
 
 // Delete one stored network by slot. Needed because the setup page used to be write-only:
@@ -751,17 +774,22 @@ static void handleWifiSetup() {
     // The stored list. SSIDs only — a saved password is never rendered back, not even
     // masked, because this page is reachable over plain HTTP on whatever network the board
     // happens to be on.
-    char list[560];
+    // static, not stack: this runs inside _srv.handleClient() on the 8 KB loopTask stack,
+    // and list+body together are ~5.5 kB. Single call site, single-threaded loopTask, so
+    // static costs nothing and shows up honestly in the RAM figure instead of hiding in
+    // the stack high-water mark. Same reasoning as victims[] in packRegistryForgetAll.
+    static char list[1400];
     size_t lu = 0;
-    lu += snprintf(list + lu, sizeof(list) - lu,
-                   "<h3>Saved networks (%u of %u)</h3>", _netCount, (unsigned)WIFI_MAX_NETS);
+    list[0] = '\0';
+    _htmlAppend(list, sizeof(list), &lu,
+                "<h3>Saved networks (%u of %u)</h3>", _netCount, (unsigned)WIFI_MAX_NETS);
     if (_netCount == 0) {
-        lu += snprintf(list + lu, sizeof(list) - lu,
-                       "<p class='dim'>None yet. Add your home network below.</p>");
+        _htmlAppend(list, sizeof(list), &lu,
+                    "<p class='dim'>None yet. Add your home network below.</p>");
     } else {
-        lu += snprintf(list + lu, sizeof(list) - lu, "<ul>");
-        for (uint8_t i = 0; i < _netCount && lu < sizeof(list) - 160; i++) {
-            lu += snprintf(list + lu, sizeof(list) - lu,
+        _htmlAppend(list, sizeof(list), &lu, "<ul>");
+        for (uint8_t i = 0; i < _netCount; i++) {
+            _htmlAppend(list, sizeof(list), &lu,
                 "<li><b>%s</b> "
                 "<form method='POST' action='/wifi' style='display:inline'>"
                 "<input type='hidden' name='_t' value='%s'>"
@@ -769,10 +797,10 @@ static void handleWifiSetup() {
                 "<button style='padding:2px 8px;background:#5a1f1f'>forget</button>"
                 "</form></li>", _nets[i].ssid, _csrfToken, (unsigned)i);
         }
-        lu += snprintf(list + lu, sizeof(list) - lu, "</ul>");
+        _htmlAppend(list, sizeof(list), &lu, "</ul>");
     }
 
-    char body[2600];
+    static char body[4096];
     snprintf(body, sizeof(body),
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
