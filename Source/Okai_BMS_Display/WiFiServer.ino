@@ -36,6 +36,7 @@ enum WifiState : uint8_t {
 static WifiState _wst          = WST_OFF;
 static uint32_t  _wstSince     = 0;      // when we entered JOINING
 static uint32_t  _staRetryAt   = 0;      // do not re-attempt a failed join before this
+static uint32_t  _staLostSince = 0;      // S-7: link first seen down — debounce, not a hair trigger
 static bool      _userForcedOff = false; // a manual BTN1 off must not be overridden by auto-on
 static bool      _mdnsUp       = false;
 // 2026-10-06 - A LIST of networks, not one, and WiFiMulti to choose between them.
@@ -762,14 +763,21 @@ static void handlePackWipe() {
         return;
     }
     uint8_t gone = packRegistryForgetAll();
-    char body[320];
+    uint8_t left = packRegistryCount();          // B-5: say whether it actually finished
+    char body[760];
     snprintf(body, sizeof(body),
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Registry wiped</title>"
         "<style>body{background:#0d1117;color:#e0e0e0;font-family:sans-serif;padding:20px}"
-        "a{color:#4af}</style></head><body><h2>%u record(s) deleted</h2>"
+        "a{color:#4af}.bad{color:#ff5555;font-weight:bold}</style></head><body>"
+        "<h2>%u record(s) deleted</h2>%s"
         "<p>Now plug the packs in ONE AT A TIME and set each number from the marker on the "
         "battery. Records held by a live port were skipped.</p>"
-        "<p><a href='/packs'>&larr; registry</a></p></body></html>", (unsigned)gone);
+        "<p><a href='/packs'>&larr; registry</a></p></body></html>",
+        (unsigned)gone,
+        left ? "<p class='bad'>WARNING: records still remain. Press Wipe again until this "
+               "says 0 remain. Rebuilding on top of leftovers re-blends the wear history "
+               "this wipe exists to destroy.</p>"
+             : "<p>0 remain &mdash; the registry is empty.</p>");
     _srv.send(200, "text/html", body);
 }
 
@@ -802,7 +810,12 @@ void wifiServerLoop() {
     // subsystem, which SOP-038 ranks BELOW WiFi. See RideWatch.ino for the full reasoning
     // and the two concrete failures that produced (a failed mount pinning the mode at IDLE
     // forever, and pack #1's zero-amp charger fault making a whole ride report as CHARGE).
-    const bool charging = chargeActive();
+    // The radio-holding charge test is the charger BIT, not real current. chargeActive()
+    // (current > 0.150 A) is the complement of chargeDone, so it is false for the whole
+    // taper — and the owner's rule is that WiFi stays up for the WHOLE charge, because the
+    // dock is where he pulls logs. See chargerPresent() in RideWatch.ino for why the bit
+    // is safe here now that the `!charging` veto over the ride shutdown is gone.
+    const bool charging = chargerPresent();
 
     // Lost the home network. RETRY it rather than give up: the owner's case is a garage at
     // the edge of coverage, where a drop is normal and a reconnect is what he expects.
@@ -812,20 +825,37 @@ void wifiServerLoop() {
     // because BOTH shutdown paths below require _wst != WST_OFF, nothing could ever turn it
     // off again - a transient beacon miss left the radio scanning for the rest of the ride.
     // _wifiAllDown() is the whole teardown and it is idempotent, so use it.
+    // 2026-10-09 - S-7: DEBOUNCE before tearing down. M-3 (above) is right, but reacting to
+    // a SINGLE missed beacon means a full deinit/re-init plus a 60 s wait — up to ~60 cycles
+    // an hour in a garage at the edge of coverage, which is precisely the owner's case. That
+    // is also the heap-churn path R-11 is about, so a hair trigger here makes the unmeasured
+    // leak risk worse. Require the link to stay down for STA_LOST_DEBOUNCE_MS.
     if (_wst == WST_STATION && WiFi.status() != WL_CONNECTED) {
-        Serial.println("[WiFi] station link LOST - radio down, will retry");
-        _wifiAllDown();
-        _staRetryAt = now + WIFI_STA_RETRY_MS;
+        if (_staLostSince == 0) {
+            _staLostSince = now;
+        } else if (now - _staLostSince >= STA_LOST_DEBOUNCE_MS) {
+            Serial.println("[WiFi] station link LOST - radio down, will retry");
+            _wifiAllDown();
+            _staLostSince = 0;
+            _staRetryAt   = now + WIFI_STA_RETRY_MS;
+        }
+    } else if (_wst == WST_STATION) {
+        _staLostSince = 0;            // link came back inside the debounce — no teardown
     }
 
     // Keep trying for as long as a charge is running. Charging is stationary, mains-powered
     // and off the water, so WiFi stays up for the whole charge - the owner's rule. Riding is
     // the opposite case and is excluded on purpose (SOP-038). A manual BTN1 off is respected.
-    // 2026-10-09 - `charging` is now chargeActive(): charger attached AND current actually
-    // going in. The old test was the logger's LOG_CHARGE, which keys on the charger BIT
-    // alone - so pack #1's fault (charger detected, +0.000 A, 2 h 12 min) re-raised the
-    // radio here every 60 s, each time blocking the loop for up to 15 s in _multi.run().
-    if (_wst == WST_OFF && !_userForcedOff && charging && !rideSuspected() &&
+    // 2026-10-09 - the old test was the logger's LOG_CHARGE. Pack #1's fault (charger
+    // detected, +0.000 A, 2 h 12 min) satisfied it, so this branch re-raised the radio
+    // every 60 s, each time blocking the loop for up to 15 s in _multi.run(). The 30 s
+    // dwell below is what fixes that, NOT a current test: a current test would also go
+    // false through the whole taper and strand the owner at the dock with no link.
+    // INITIATING a join is gated harder than HOLDING one: chargerPresentFor() adds a 30 s
+    // dwell so a chattering or momentarily-asserted bit cannot trigger a 15 s blocking
+    // scan. Holding the radio up uses the bare bit, so the taper never drops the link.
+    if (_wst == WST_OFF && !_userForcedOff && !rideSuspected() &&
+        chargerPresentFor(CHG_WIFI_DWELL_MS) &&
         wifiHasCreds() && (int32_t)(now - _staRetryAt) >= 0) {
         Serial.println("[WiFi] charging - (re)trying the home network");
         _staRetryAt = now + WIFI_STA_RETRY_MS;
@@ -854,7 +884,13 @@ void wifiServerLoop() {
     // charger necessarily attached - the AP would have dropped out from under it repeatedly.
     // Safe against SOP-038 because the ride shutdown above is unconditional and runs FIRST:
     // an associated client cannot hold the radio up into a ride.
-    const bool apClient = (_wst == WST_AP && WiFi.softAPgetStationNum() > 0);
+    // S-10: the re-arm also requires that this board has NEVER seen the vehicle discharge.
+    // With zero telemetry (no packs, or all packs silent) a telemetry-derived interlock has
+    // nothing to go on, and an associated phone would otherwise hold the AP up indefinitely.
+    // This does not make that case safe — it cannot be made safe from telemetry alone — it
+    // bounds it to a board that has not moved since power-on.
+    const bool apClient = (_wst == WST_AP && !rideEverSeen() &&
+                           WiFi.softAPgetStationNum() > 0);
     if (_wst != WST_OFF && (now - _wstSince) > WIFI_ON_WINDOW_MS) {
         if ((_wst == WST_STATION && !riding) || charging || (apClient && !riding)) {
             _wstSince = now;
@@ -882,7 +918,20 @@ void wifiServerLoop() {
     if (_bootJoinPending) {
         if (now > BOOT_JOIN_DEADLINE_MS) {
             _bootJoinPending = false;
-            Serial.println("[WiFi] boot join ABANDONED - no evidence a ride is not running");
+            // 2026-10-09 - B-4. Abandoning outright was a hole: bootJoinSafe() needs at
+            // least one pack frame, so powering up with NO PACK ATTACHED failed the gate,
+            // abandoned at 30 s, and then nothing retried — station-lost needs WST_STATION,
+            // the charge retry needs the charger bit, the window close needs _wst != OFF.
+            // WiFi was dead for the entire power cycle and plugging a pack in afterwards
+            // did not help. That defeats "WiFi up at boot, no button" outright and strands
+            // the web-driven registry rebuild, which is bench work with no pack in yet.
+            //
+            // The AP is the right fallback: no scan, no 15 s block, nothing to starve. And
+            // the ride shutdown above is now unconditional, so the instant any discharge
+            // appears this comes straight back down.
+            Serial.println("[WiFi] boot join: no ride evidence either way - starting AP "
+                           "(no scan, no blocking join)");
+            _wifiStartAP();
         } else if (now > BOOT_JOIN_EARLIEST_MS && bootJoinSafe()) {
             _bootJoinPending = false;
             _wifiStartAuto();
@@ -899,6 +948,13 @@ void wifiToggle() {
         _userForcedOff = true;          // do not let auto-on undo a deliberate off
         Serial.println("[WiFi] off (manual)");
     } else {
+        // S-12: the ON path was not ride-gated at all. R-3's 1.5 s hold stops a brief
+        // glitch, but a water bridge lasting 1.5-4.0 s lands exactly in the window between
+        // that hold and the 4 s sleep arm — and would have raised the radio mid-ride.
+        if (rideSuspected()) {
+            Serial.println("[WiFi] toggle REFUSED - packs are discharging (SOP-038)");
+            return;
+        }
         _userForcedOff = false;
         if (wifiHasCreds()) {
             _wifiStartAuto();

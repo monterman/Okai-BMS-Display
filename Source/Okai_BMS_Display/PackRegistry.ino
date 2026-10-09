@@ -927,6 +927,20 @@ uint8_t packRegistryList(char* out, size_t outLen, const char* csrf) {
                 } else {
                     Serial.printf("[REG] LIST TRUNCATED - %s did not fit in %u bytes; "
                                   "the page is INCOMPLETE\n", path, (unsigned)outLen);
+                    // N-4: the owner does this on a phone, where no one sees the serial
+                    // port. Spend the last of the buffer saying the page is incomplete —
+                    // a visibly short list beats a silently short one.
+                    const char* warn =
+                        "<tr><td colspan='10' style='color:#ff5555;font-weight:bold'>"
+                        "LIST TRUNCATED - more records exist than fit on this page. "
+                        "Delete some, or raise the rows buffer.</td></tr>";
+                    size_t wl = strlen(warn);
+                    if (used + wl + 1 < outLen) {
+                        memcpy(out + used, warn, wl);
+                        used += wl;
+                        out[used] = '\0';
+                    }
+                    break;                       // nothing more will fit; stop walking
                 }
             }
             f = dir.openNextFile();
@@ -975,12 +989,19 @@ uint8_t packRegistryForgetAll(void) {
     // Collect first, delete after closing the directory: removing inside an openNextFile()
     // walk kills the walk, which is the bug that made the dashboard's old "Delete all"
     // stop after one file.
-    char   victims[12][40];
+    // 2026-10-09 - B-5: the cap was 12, and a wipe that hit it looked EXACTLY like a
+    // complete one — same message, same page, no warning. The dump of 2026-10-05 already
+    // showed four records all claiming 55 cycles, so a registry well past 12 is not
+    // hypothetical, and a half-wiped registry is the worst possible starting point for a
+    // rebuild: the leftovers are the blended-history records the rebuild exists to destroy.
+    // 32 covers 8 packs plus every _2.._9 collision name. packRegistryCount() below lets
+    // the caller state plainly whether anything is left.
+    char   victims[32][40];
     uint8_t nv = 0;
     File dir = LittleFS.open("/packs");
     if (dir && dir.isDirectory()) {
         File f = dir.openNextFile();
-        while (f && nv < 12) {
+        while (f && nv < 32) {
             snprintf(victims[nv], sizeof(victims[0]), "/packs/%s", f.name());
             f.close();
             if (!_heldByPort(victims[nv])) nv++;
@@ -993,6 +1014,20 @@ uint8_t packRegistryForgetAll(void) {
     for (uint8_t i = 0; i < nv; i++) if (LittleFS.remove(victims[i])) gone++;
     Serial.printf("[REG] WIPED %u stored record(s) - rebuild from the markers now\n", gone);
     return gone;
+}
+
+// How many records are stored right now. Exists so a wipe can REPORT whether it finished
+// instead of leaving a partial wipe indistinguishable from a complete one (B-5).
+uint8_t packRegistryCount(void) {
+    if (!fsReady) return 0;
+    uint8_t n = 0;
+    File dir = LittleFS.open("/packs");
+    if (dir && dir.isDirectory()) {
+        File f = dir.openNextFile();
+        while (f) { if (!f.isDirectory()) n++; f.close(); f = dir.openNextFile(); }
+    }
+    if (dir) dir.close();
+    return n;
 }
 
 const PackRecord* packRegGet(uint8_t port) {

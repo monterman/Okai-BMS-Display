@@ -266,12 +266,24 @@ static void drawHeader() {
     // the fault that caused it is now visible at a glance.
     _gfx->setCursor(210, 4);
     {
-        int8_t stuck = -1;
-        for (uint8_t i = 0; i < 3; i++) if (btnIsStuck(i)) { stuck = (int8_t)i; break; }
-        if (stuck >= 0) {
-            char s[8]; snprintf(s, sizeof(s), "BTN%d!", (int)stuck + 1);
+        // 2026-10-09 - FS! OUTRANKS A STUCK BUTTON HERE, and the reason is the pack #1
+        // diagnosis. If LittleFS fails to mount, loggerLoop() returns immediately: no CSV
+        // row is ever written, the mode stays IDLE, and NOTHING on the screen or the
+        // dashboard says so — the owner would ride a full session believing he was
+        // logging and find an empty card afterwards. Four uploaded CSV logs are what
+        // settled pack #1's charge-path fault; silent logging loss is how that evidence
+        // stops existing. A stuck button is an annoyance, a dead log is a lost diagnosis.
+        if (!fsReady) {
             _gfx->setTextColor(C_POOR);
-            _gfx->print(s);
+            _gfx->print("FS!");
+        } else {
+            int8_t stuck = -1;
+            for (uint8_t i = 0; i < 3; i++) if (btnIsStuck(i)) { stuck = (int8_t)i; break; }
+            if (stuck >= 0) {
+                char s[8]; snprintf(s, sizeof(s), "BTN%d!", (int)stuck + 1);
+                _gfx->setTextColor(C_POOR);
+                _gfx->print(s);
+            }
         }
     }
 

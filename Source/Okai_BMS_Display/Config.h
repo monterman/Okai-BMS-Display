@@ -355,6 +355,13 @@ extern volatile uint32_t g_hbLastMs;   // Heartbeat.ino — last keep-alive beat
 // Smallest clock correction worth a flash erase + a DS3231 write. An open dashboard tab
 // re-syncs every 5 s; 30 s keeps CSV timestamps honest while reducing that to ~nothing.
 #define TIME_RESYNC_MIN_DRIFT_SEC 30
+// Charger bit must hold this long before a join is INITIATED, so a chattering bit cannot
+// trigger a 15 s blocking scan. Holding an existing link up needs no dwell.
+#define CHG_WIFI_DWELL_MS     30000UL
+// A station link must stay down this long before the radio is torn down. A single missed
+// beacon used to force a full deinit/re-init plus a 60 s wait — ~60 cycles/hour at the
+// edge of coverage, which is both pointless churn and the heap-leak path R-11 is about.
+#define STA_LOST_DEBOUNCE_MS  3000UL
 
 // ─── Pack energy design specs (Panasonic NCR18650BD 10S4P) ───────────────────
 #define PACK_DESIGN_AH   12.8f    // 4P × 3.2 Ah rated
@@ -533,6 +540,9 @@ bool rideSuspected();         // any pack discharging past threshold, within hys
 bool packsLoadedRecently();   // real current either way in the last 60 s — sleep interlock
 bool chargeActive();          // charger attached AND current actually going in
 bool bootJoinSafe();          // positive evidence no ride is running — boot-join gate
+bool rideEverSeen();          // any discharge since boot — no-telemetry backstop
+bool chargerPresent();        // charger BIT only — THIS is the WiFi gate, not chargeActive()
+bool chargerPresentFor(uint32_t ms);   // ...held for a dwell, before INITIATING a join
 
 // ─── Cross-file function prototypes (PackRegistry.ino) ───────────────────────
 extern PackRecord packRec[NUM_PACKS];
@@ -550,3 +560,4 @@ uint8_t packRegistryList(char* out, size_t outLen, const char* csrf);  // <tr> r
 bool    packRegistryForget(const char* file);            // delete ONE stored record
 bool    packRegistrySetLabelByFile(const char* file, uint8_t label);
 uint8_t packRegistryForgetAll(void);                     // wipe /packs, returns files removed
+uint8_t packRegistryCount(void);                         // records stored now — proves a wipe finished

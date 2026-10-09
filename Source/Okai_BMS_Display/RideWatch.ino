@@ -37,7 +37,12 @@
 
 // Any pack above this, either direction, counts as "in use" for the sleep interlock.
 #define RW_LOAD_A           1.0f
-#define RW_LOAD_WINDOW_MS   60000UL
+// 2026-10-09 - 60 s → 300 s (audit S-8). A water bridge on BTN1 after the vehicle has
+// been at rest for more than the window still sleeps the board, and under K-1 that cut
+// latches. Widening the window is the cheapest real reduction in that risk: it costs
+// nothing but a longer wait before a DELIBERATE sleep is allowed, and the 60 s timer
+// wake (PowerManager.ino) already means deep sleep barely functions as an off switch.
+#define RW_LOAD_WINDOW_MS   300000UL
 
 // The BMS emits 0x2020 == 8.224 A as an IDLE PLACEHOLDER, not a reading (OkaiBMS.h:43).
 // Display.ino has filtered it since July. The load interlock did not, which inverted it:
@@ -49,25 +54,35 @@ static inline bool rwIsPlaceholder(float a) {
 }
 
 static uint32_t sRwRideUntil   = 0;   // discharge seen → now + hysteresis
+static bool     sRwRideArmed   = false;   // N-3: "armed at all", so a rollover-to-0 deadline
+                                          // is not read as "never armed"
 static uint32_t sRwLastLoadMs  = 0;   // last pass on which any pack moved real current
 static bool     sRwEverLoaded  = false;
 static bool     sRwSeenFrame   = false;   // at least one valid pack frame since boot
 static bool     sRwDischSeen   = false;   // any discharge at all since boot (M-4 boot gate)
+static uint32_t sRwChgSince    = 0;   // first pass of the current unbroken charger-bit run
+static bool     sRwChgPresent  = false;
 
 // Call from loop(), EVERY pass, straight after uartLoop() so it sees fresh frames.
 void rideWatchUpdate() {
     const uint32_t now = millis();
+    bool chgSeenThisPass = false;
 
     for (uint8_t i = 0; i < NUM_PACKS; i++) {
         if (!packs[i].valid) continue;
         if ((now - packs[i].lastUpdateMs) > PACK_CONNECTED_MS) continue;  // stale frame
         sRwSeenFrame = true;
 
+        // The charger BIT, independent of current. This is what holds the radio up for a
+        // whole charge - see chargerPresent() for why the bit and not the current.
+        if (packs[i].chargerDetected) chgSeenThisPass = true;
+
         float a = packs[i].current;
         if (rwIsPlaceholder(a)) continue;
 
         if (a < -LOG_RIDE_THRESHOLD_A) {          // real discharge → riding
             sRwRideUntil = now + LOG_RIDE_HYSTERESIS_MS;
+            sRwRideArmed = true;
             sRwDischSeen = true;
         }
         float mag = (a < 0) ? -a : a;
@@ -76,6 +91,15 @@ void rideWatchUpdate() {
             sRwEverLoaded = true;
         }
     }
+
+    // Dwell timer on the charger bit: sRwChgSince marks the start of the current unbroken
+    // run of passes in which SOME pack asserted it. Any pass without it resets the run.
+    if (chgSeenThisPass) {
+        if (!sRwChgPresent) { sRwChgPresent = true; sRwChgSince = now; }
+    } else {
+        sRwChgPresent = false;
+        sRwChgSince   = 0;
+    }
 }
 
 // ── Queries: pure reads, safe to call anywhere ───────────────────────────────
@@ -83,7 +107,43 @@ void rideWatchUpdate() {
 // SOP-038 ride interlock. True while any pack has discharged past the threshold within
 // the hysteresis window. Independent of fsReady, of _mode, and of the charger bit.
 bool rideSuspected() {
-    return sRwRideUntil && (int32_t)(millis() - sRwRideUntil) < 0;
+    // N-3: gate on "was it ever armed", not on sRwRideUntil != 0. Once per 49.7 days
+    // now + 120000 wraps to exactly 0, and the old form read that as "never armed" —
+    // i.e. it would have reported NOT riding, mid-ride, for one sample.
+    return sRwRideArmed && (int32_t)(millis() - sRwRideUntil) < 0;
+}
+
+// Any discharge at all since boot. Used as the no-telemetry backstop on the AP-client
+// window re-arm: an associated phone must not be able to hold the radio up once this
+// board has ever seen the vehicle move.
+bool rideEverSeen() { return sRwDischSeen; }
+
+// ── The charger BIT, with no current test. THIS is the WiFi gate. ─────────────
+// 2026-10-09 - chargeActive() below was briefly used to gate the radio and that was
+// WRONG, caught in audit. It requires current > kBalanceCurrentA (0.150 A), which makes
+// it the exact logical complement of UART.ino's chargeDone — so it goes false for the
+// ENTIRE taper/balancing phase, which Display.ino notes "takes as long or longer" than
+// bulk and which draws tens of milliamps. The owner's requirement is the opposite:
+//
+//   "If we are charging PAX, Wi-Fi should stay on because we're not writing, we're
+//    charging" — and the dock is exactly where he pulls logs from.
+//
+// Worst case traced: a link drop during the taper (his garage is at the edge of
+// coverage) tears the radio down, and the retry then needs chargeActive() — false —
+// so there is no reconnect for the rest of the charge.
+//
+// Using the bit does NOT reopen G-2. G-2's failure was never the bit itself: it was
+// that `charging` held a VETO over the ride shutdown (`riding && !charging`), so a
+// latched bit could suppress the shutdown. That veto is deleted. rideSuspected() is
+// computed from discharge current and is fully independent of the bit, so pack #1's
+// stuck-bit fault cannot defeat it — it can only keep the radio up on a stationary
+// vehicle, which is harmless and is what the owner asked for.
+bool chargerPresent() { return sRwChgPresent; }
+
+// Same, but held for at least `ms`. Used before INITIATING a join, so a chattering bit
+// or a momentary assert cannot trigger a 15 s blocking scan.
+bool chargerPresentFor(uint32_t ms) {
+    return sRwChgPresent && (millis() - sRwChgSince) >= ms;
 }
 
 // Sleep interlock: has any pack moved real current recently? A rider on the water has
