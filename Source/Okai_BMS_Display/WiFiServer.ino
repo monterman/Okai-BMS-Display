@@ -102,6 +102,16 @@ static bool wifiNetAdd(const char* ssid, const char* pass) {
 
 bool wifiHasCreds() { return _netCount > 0; }
 
+// Delete one stored network by slot. Needed because the setup page used to be write-only:
+// there was no way to see what was saved, let alone remove a typo, short of a full reflash.
+static bool wifiNetForget(uint8_t slot) {
+    if (slot >= _netCount) return false;
+    for (uint8_t i = slot; i + 1 < _netCount; i++) _nets[i] = _nets[i + 1];
+    _netCount--;
+    memset(&_nets[_netCount], 0, sizeof(WifiNet));
+    return wifiNetsSave();
+}
+
 // What the header and the diag line should say.
 const char* wifiStateStr() {
     switch (_wst) {
@@ -142,14 +152,15 @@ static void _wifiAllDown() {
 
 static void _wifiStartAP() {
     WiFi.mode(WIFI_AP);
-    // esp_read_mac(), NOT WiFi.macAddress(). foilIQ hit this: asked right after a mode switch,
-    // before the interface is up, the driver returns an unset address and every board
-    // advertises the same name. esp_read_mac() reads the factory value out of efuse and is
-    // valid whatever state the radio is in.
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(_apSsid, sizeof(_apSsid), "%s-%02X%02X%02X",
-             WIFI_AP_SSID, mac[3], mac[4], mac[5]);
+    // 2026-10-09 - OWNER'S DECISION: the AP name and password stay EXACTLY as they have
+    // always been - "OkaiBMS" / "12345678". A MAC suffix was briefly added on audit advice
+    // (so his phone would not auto-join it); he has overruled that, and he is right about
+    // the priority: this AP is his guaranteed way back into the box when nothing else
+    // works. A name he already knows beats a name he has to look up, and the password has
+    // to stay predictable for the same reason. Accepted trade: his phone may auto-join,
+    // and a second board (the planned dock) would clash on the name - deal with that when
+    // a second board exists, by changing THAT board.
+    snprintf(_apSsid, sizeof(_apSsid), "%s", WIFI_AP_SSID);
     WiFi.softAP(_apSsid, WIFI_AP_PASSWORD);        // WPA2, never open — the AP exposes every log
     _wst = WST_AP;
     // 2026-10-09 - S-2: _wstSince was set only by _wifiStartAuto(), so every path that
@@ -682,28 +693,86 @@ static void handleWifiSetup() {
             _srv.send(500, "text/plain", "Could not write to NVS");
             return;
         }
-        Serial.printf("[WiFi] credentials stored for \"%s\" — joining now\n", ssid.c_str());
+        // 2026-10-09 - SAVE NO LONGER TEARS THE AP DOWN, and that was the whole problem
+        // with this page. It used to save ONE network and immediately drop the AP to go
+        // join it, so there was no way to enter a second or third network in one sitting -
+        // which is exactly the owner's ask: home, plus two phone hotspots. Now saving just
+        // saves, the page comes back with the list, and joining is a separate button he
+        // presses when he has finished entering them.
+        Serial.printf("[WiFi] credentials stored for \"%s\" (%u/%u saved)\n",
+                      ssid.c_str(), _netCount, (unsigned)WIFI_MAX_NETS);
+        _srv.sendHeader("Location", "/wifi");
+        _srv.send(302, "text/plain", "saved");
+        return;
+    }
+
+    // Delete one stored network.
+    if (_srv.hasArg("forget")) {
+        if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+            _srv.send(403, "text/plain", "Forbidden");
+            return;
+        }
+        wifiNetForget((uint8_t)_srv.arg("forget").toInt());
+        _srv.sendHeader("Location", "/wifi");
+        _srv.send(302, "text/plain", "forgotten");
+        return;
+    }
+
+    // Join now — the explicit action, separated from saving.
+    if (_srv.hasArg("join")) {
+        if (!_srv.hasArg("_t") || _srv.arg("_t") != String(_csrfToken)) {
+            _srv.send(403, "text/plain", "Forbidden");
+            return;
+        }
+        if (rideSuspected()) {            // SOP-038: never from a web button either
+            _srv.send(409, "text/plain", "Refused - packs are discharging");
+            return;
+        }
         _srv.send(200, "text/html",
-                  "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Saved</title>"
+                  "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Joining</title>"
                   "<style>body{background:#0d1117;color:#e0e0e0;font-family:sans-serif;"
-                  "padding:20px}a{color:#4af}</style></head><body>"
-                  "<h2>Network saved</h2>"
-                  "<p>Switching off the access point and joining it now. This page will go "
-                  "away &mdash; that is the point.</p>"
-                  "<p>From now on reach the display at <b>http://" WIFI_MDNS_NAME ".local</b> "
-                  "on your home network. It comes up by itself whenever a charge starts.</p>"
-                  "<p class='dim'>If the join fails it falls back to this access point.</p>"
-                  "</body></html>");
+                  "padding:20px}a{color:#4af}.dim{color:#888;font-size:13px}</style></head>"
+                  "<body><h2>Joining now</h2>"
+                  "<p>The access point is going away &mdash; that is the point. Reconnect "
+                  "your phone to your normal network and open "
+                  "<b>http://" WIFI_MDNS_NAME ".local</b></p>"
+                  "<p class='dim'>If no stored network answers within 15 seconds it falls "
+                  "back to this access point, same name, same password.</p></body></html>");
         _srv.client().flush();
         delay(250);                      // let the response leave before the radio flips
         _wifiAllDown();
         _userForcedOff = false;
         _staRetryAt    = 0;
+        _apNoEvidence  = false;
         _wifiStartAuto();
         return;
     }
 
-    char body[1400];
+    // The stored list. SSIDs only — a saved password is never rendered back, not even
+    // masked, because this page is reachable over plain HTTP on whatever network the board
+    // happens to be on.
+    char list[560];
+    size_t lu = 0;
+    lu += snprintf(list + lu, sizeof(list) - lu,
+                   "<h3>Saved networks (%u of %u)</h3>", _netCount, (unsigned)WIFI_MAX_NETS);
+    if (_netCount == 0) {
+        lu += snprintf(list + lu, sizeof(list) - lu,
+                       "<p class='dim'>None yet. Add your home network below.</p>");
+    } else {
+        lu += snprintf(list + lu, sizeof(list) - lu, "<ul>");
+        for (uint8_t i = 0; i < _netCount && lu < sizeof(list) - 160; i++) {
+            lu += snprintf(list + lu, sizeof(list) - lu,
+                "<li><b>%s</b> "
+                "<form method='POST' action='/wifi' style='display:inline'>"
+                "<input type='hidden' name='_t' value='%s'>"
+                "<input type='hidden' name='forget' value='%u'>"
+                "<button style='padding:2px 8px;background:#5a1f1f'>forget</button>"
+                "</form></li>", _nets[i].ssid, _csrfToken, (unsigned)i);
+        }
+        lu += snprintf(list + lu, sizeof(list) - lu, "</ul>");
+    }
+
+    char body[2600];
     snprintf(body, sizeof(body),
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -712,27 +781,43 @@ static void handleWifiSetup() {
         "input{width:100%%;padding:10px;margin:6px 0 14px;background:#161b22;color:#e0e0e0;"
         "border:1px solid #333;border-radius:4px;font-size:16px}"
         "button{padding:12px 20px;background:#1f6feb;color:#fff;border:0;border-radius:4px;"
-        "font-size:16px}.dim{color:#888;font-size:13px}a{color:#4af}</style></head><body>"
-        "<h2>Join a home network</h2>"
+        "font-size:16px}ul{padding-left:20px}li{margin:6px 0}"
+        "h3{color:#4af;margin-bottom:4px}.dim{color:#888;font-size:13px}a{color:#4af}"
+        "</style></head><body>"
+        "<h2>WiFi networks</h2>"
         "<p class='dim'>Current state: <b>%s</b>%s%s</p>"
+        "%s"
+        "<h3>Add a network</h3>"
         "<form method='POST' action='/wifi'>"
         "<input type='hidden' name='_t' value='%s'>"
         "<label>Network name (SSID)</label>"
-        "<input name='ssid' maxlength='32' value='%s' required>"
+        "<input name='ssid' maxlength='32' required>"
         "<label>Password</label>"
-        "<input name='pass' type='password' maxlength='64' placeholder='%s'>"
-        "<button type='submit'>Save and join</button></form>"
-        "<p class='dim'>Stored in the chip's NVS, not in the firmware, so it is never in "
-        "source control and it survives a flash. Afterwards the display reaches the network "
-        "by itself whenever a charge starts, and answers at "
-        "<b>http://" WIFI_MDNS_NAME ".local</b>. It never joins while you are riding.</p>"
+        "<input name='pass' type='password' maxlength='64'>"
+        "<button type='submit'>Save</button></form>"
+        "<p class='dim'>Saving does <b>not</b> disconnect anything &mdash; add your home "
+        "network and both phone hotspots one after another, then press Join below.</p>"
+        "<h3>Join now</h3>"
+        "<form method='POST' action='/wifi'>"
+        "<input type='hidden' name='_t' value='%s'>"
+        "<input type='hidden' name='join' value='1'>"
+        "<button type='submit'%s>Join the strongest saved network</button></form>"
+        "<p class='dim'>Which one it picks is decided by <b>signal strength</b>, not by the "
+        "order in this list &mdash; whichever saved network is strongest where the display "
+        "is standing wins. Credentials live in the chip's NVS, never in the firmware, so "
+        "they are not in source control and they survive a reflash. Afterwards it joins by "
+        "itself at boot and whenever a charge starts, and answers at "
+        "<b>http://" WIFI_MDNS_NAME ".local</b>. It never joins while you are riding, and "
+        "if nothing answers it falls back to this access point &mdash; <b>" WIFI_AP_SSID
+        "</b>, same password as always.</p>"
         "<p><a href='/'>&larr; dashboard</a></p></body></html>",
         wifiStateStr(),
         (_wst == WST_STATION) ? " &mdash; IP " : "",
         (_wst == WST_STATION) ? WiFi.localIP().toString().c_str() : "",
+        list,
         _csrfToken,
-        _netCount ? _nets[0].ssid : "",
-        _netCount ? "unchanged (stored)" : "none stored");
+        _csrfToken,
+        _netCount ? "" : " disabled");
     _srv.send(200, "text/html", body);
 }
 
