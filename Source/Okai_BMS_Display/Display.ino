@@ -69,6 +69,32 @@ bool btnIsStuck(uint8_t i) { return (i < 3) ? _btnStuck[i] : false; }
 static void updateStuckButtons(uint32_t now, bool b1, bool b2, bool b3) {
     const bool low[3] = { b1 == LOW, b2 == LOW, b3 == LOW };
     static const char* names[3] = { "BTN1", "BTN2", "BTN3" };
+
+    // 2026-10-11 - INSTRUMENTATION, deliberately added INSTEAD of another guess at a fix.
+    // The owner does not accept "it's hardware" and he has grounds: "I don't see a short in
+    // the button and the screen is reacting. It has to be something with the firmware."
+    //
+    // I have ruled out the two things I could rule out by reading: GPIO14 appears exactly
+    // once in the whole pin map (BUTTON2_PIN — no collision with the pack UARTs, the
+    // NeoPixels or the ADC), and INPUT_PULLUP is set on all three at Display.ino:1144.
+    // What I CANNOT tell from here is whether the pad is actually low or the detector is
+    // latching on its own. So print the raw pad every 3 s and let the evidence decide:
+    //
+    //   raw=1 while stk=1   -> detector/state bug. Firmware, and mine.
+    //   raw=0 after a DEEP SLEEP wake -> the gpio_deep_sleep_hold_en() latch that
+    //                          Okai_BMS_Display.ino never released (fixed this build).
+    //   raw=0 from a cold/USB boot -> genuinely pulled low outside the chip. Hardware.
+    //
+    // A pull-up CANNOT fight a hold latch, which is why the third case and the second look
+    // identical on screen and need the reset reason to tell apart.
+    static uint32_t _btnDbgLast = 0;
+    if ((uint32_t)(now - _btnDbgLast) >= 3000UL) {
+        _btnDbgLast = now;
+        Serial.printf("[BTN] raw b1=%d b2=%d b3=%d  stk=%d%d%d  rst=%d\n",
+                      (int)b1, (int)b2, (int)b3,
+                      (int)_btnStuck[0], (int)_btnStuck[1], (int)_btnStuck[2],
+                      (int)esp_reset_reason());
+    }
     for (uint8_t i = 0; i < 3; i++) {
         if (!low[i]) {
             if (_btnStuck[i])
@@ -328,9 +354,22 @@ static void drawHeader() {
     //
     // Logging mode is NOT lost — it stays in the CSV filename, /packs and the dashboard. It
     // is only off the header. logCurrentMode() is no longer called here at all.
+    // 2026-10-11 - REVERTED TO STATE COLOUR, and this one was my error. 0.3.5 drew these
+    // letters C_DIM unconditionally because I asked him "neutral grey always, or green when
+    // on?" and recommended neutral. That was wrong, and he saw it immediately:
+    //   "Wi-Fi is grayed out but the dot is green. What the hell does that mean? To me it
+    //    means that Wi-Fi is connected to the local network but the Wi-Fi is off. It's
+    //    impossible. If the Wi-Fi is gray it has to be off. If it's green it's on and then
+    //    we add the dot."
+    // Exactly right. Grey reads as OFF, so grey letters beside a green dot assert "off and
+    // connected" at the same time. He had already given the correct rule on 2026-10-09 and
+    // I overrode it with a question his own words had answered. GREY = radio off, GREEN =
+    // radio on; the dot below carries the link state on top of that, and the two no longer
+    // contradict: grey+no dot = off, green+green = connected, green+red = on, nothing
+    // connected.
     static const char kWifiLabel[] = "WiFi";
     _gfx->setCursor(70, 4);
-    _gfx->setTextColor(C_DIM);
+    _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
     _gfx->print(kWifiLabel);
 
     // 2026-10-09 - LINK DOT, the owner's ask and a good one: "I know at a glance what is
@@ -1014,8 +1053,21 @@ static void drawScreenCharging() {
         _gfx->setTextColor(C_TEXT);
         _gfx->setCursor(4, ry);
         if (!hasData) {
-            char pl[10]; snprintf(pl, sizeof(pl), "P%u  ---", i+1);
-            _gfx->setTextColor(C_NODATA);
+            // 2026-10-11 - THE PACK NUMBER WAS MISSING HERE. The owner: "I still don't see
+            // the port number showing on the main screen in the Charge 1. I see P1 but I do
+            // not see the actual dash and then the actual label so it's not helping."
+            //
+            // This branch built its own label with a bare snprintf instead of calling
+            // portPackStr(), so it printed "P1  ---" with no number. It fires whenever a
+            // pack is VALID but has no charger on that port — i.e. a pack that is talking
+            // to us and whose number we know perfectly well. Four screens were taught to
+            // show "P3 - 6" and this one quietly was not.
+            //
+            // Buffer went 10 -> 16 on purpose: "P4 - 8" is 6 chars, plus "  ---" is 5, plus
+            // the NUL is 12. pl[10] would have TRUNCATED the thing this fix exists to show.
+            char pp[10]; portPackStr(i, pp, sizeof(pp));
+            char pl[16]; snprintf(pl, sizeof(pl), "%s  ---", pp);
+            _gfx->setTextColor(packLabelColor(i, C_NODATA));
             _gfx->print(pl);
             continue;
         }

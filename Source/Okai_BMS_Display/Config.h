@@ -14,7 +14,12 @@
 //
 // 2026-10-11 - 0.3.6: picker heading shows "PORT n" at size 3, and the self-raising
 // ambiguity prompt is gone — an unidentified pack reads "P3 - ?" in amber instead.
-#define FW_VERSION "0.3.6"
+//
+// 2026-10-11 - 0.3.7: WiFi letters back to state colour (grey=off, green=on) - 0.3.5's
+// grey-always contradicted the green dot. Pack number now shown on the charging screen's
+// no-charger rows. Deep-sleep pad latch released at boot. Raw button levels on serial
+// every 3 s so the BTN2 question gets settled by evidence.
+#define FW_VERSION "0.3.7"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4

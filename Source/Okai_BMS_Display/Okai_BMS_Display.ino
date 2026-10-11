@@ -12,6 +12,27 @@ void setup() {
   pinMode(POWER_EN_PIN, OUTPUT);
   digitalWrite(POWER_EN_PIN, HIGH);
 
+  // 2026-10-11 - RELEASE THE DEEP-SLEEP PAD LATCH. doSleep() calls
+  // gpio_deep_sleep_hold_en() (PowerManager.ino:55), which latches EVERY pad through deep
+  // sleep — not just POWER_EN. Nothing ever released it: this function undid the hold on
+  // POWER_EN alone, so after a wake the buttons stayed electrically frozen at whatever
+  // level they held at the moment of sleep. An internal pull-up CANNOT fight a hold latch,
+  // so a button that was down when the board slept reads LOW forever, the stuck-button
+  // detector fires at 15 s and refuses it, and only a true power cycle clears it.
+  //
+  // That is exactly the owner's report: BTN2 red, no short in the switch, cleared by a
+  // restart, back again later. Not yet proven to be the cause of his sightings — the boot
+  // logs captured on 10-10 and 10-11 both show rst:0x15 (USB reset), not a sleep wake — but
+  // it is a real latch with a two-line fix and it had to go either way.
+  //
+  // ORDER IS SAFETY-CRITICAL. POWER_EN must already be driven HIGH above before the global
+  // hold is dropped; release it while the pin is undriven and the board cuts its own LiPo
+  // rail. That is why this sits AFTER the digitalWrite and not before it.
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)BUTTON1_PIN);
+  gpio_hold_dis((gpio_num_t)BUTTON2_PIN);
+  gpio_hold_dis((gpio_num_t)BUTTON3_PIN);
+
   Serial.begin(115200);   // UART0 — USB-C debug
 
   powerManagerInit(); // configures EXT0 wakeup before anything else
