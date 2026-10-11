@@ -6,7 +6,15 @@
 // the only thing that caught it was Bremote3 reading the banner on a bench capture. The
 // hashes and the new behaviour are what prove which build is on the board; this string proves
 // nothing until it is maintained. Bump it in the SAME commit as any behaviour change.
-#define FW_VERSION "0.3.4"
+//
+// 2026-10-11 - 0.3.5: header declutter, the owner's call and approved before the edit.
+// "W:ON"/"W:OFF" and the " RDE"/" CHG" mode tag are gone; the WiFi label is a fixed neutral
+// "WiFi" and the link dot carries the whole state. Bumped in the same commit, per the rule
+// above, because a flashed binary that differs from 0.3.4 must not claim to be 0.3.4.
+//
+// 2026-10-11 - 0.3.6: picker heading shows "PORT n" at size 3, and the self-raising
+// ambiguity prompt is gone — an unidentified pack reads "P3 - ?" in amber instead.
+#define FW_VERSION "0.3.6"
 
 // ─── Pack count ──────────────────────────────────────────────────────────────
 #define NUM_PACKS 4

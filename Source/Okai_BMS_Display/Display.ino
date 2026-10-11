@@ -136,10 +136,20 @@ static uint8_t  _labelPickPort  = 0;
 static uint8_t  _labelPickVal   = 0;   // 0=unassigned, 1-8=label
 static uint32_t _overlayShownMs = 0;   // last time the overlay opened or took a button
 
-// One ask per insertion. When PackRegistry cannot tell two stored packs apart it sets
-// packRec[].ambiguous; we prompt once, then stay quiet until that port is re-seated,
-// so a pack it can never resolve does not nag on every refresh.
-static bool _ambiguousAsked[NUM_PACKS];
+// 2026-10-11 - _ambiguousAsked[] IS GONE, along with the self-raising picker it gated. See
+// the note in displayLoop where the auto-open loop used to be. Nothing on this device opens
+// an overlay without a button press any more.
+//
+// AMBER LABEL = this pack has no number yet, or the registry cannot tell which stored pack
+// it is. This is what replaces the prompt: portPackStr() already renders "P3 - ?", and
+// colour is what makes that register at arm's length instead of reading as ordinary chrome.
+// Takes the caller's normal colour so a row that encodes something else in colour (the
+// cell-health row, the charging tiles) can simply not call this and keep its own meaning.
+static uint16_t packLabelColor(uint8_t port, uint16_t normal) {
+    if (port >= NUM_PACKS || !packs[port].valid) return normal;
+    if (labelGet(port) == 0 || packRec[port].ambiguous) return C_WARN;
+    return normal;
+}
 
 // ── Alternating display phase (5 s primary / 3 s secondary) ─────────────────
 #define ALT_A_MS 5000UL
@@ -186,28 +196,38 @@ static void drawLabelPicker() {
     _gfx->drawRect(BX,     BY,     BW,     BH,     C_ACCENT);
     _gfx->drawRect(BX + 1, BY + 1, BW - 2, BH - 2, C_ACCENT);
 
-    // Title — which pack we are naming, in the owner's terms
+    // 2026-10-11 - PORT NUMBER PROMOTED TO SIZE 3. The owner's call and a genuine defect:
+    // "it reads in large letters Which pack? but it does nto say in bog letters the por
+    // number doh!!"  He is right. The port was drawn at setTextSize(1) — a 6x8 font, the
+    // SMALLEST text on an overlay whose whole job is tying the pack in his hand to a socket
+    // on the buggy — while the question above it was 2x and the value 6x. Backwards.
+    //
+    // Fits the 276 px inner width: "PORT 3" at size 3 is 6*18 = 108 px, the question at
+    // size 2 is 11*12 = 132 px, 108 + 16 gap + 132 = 256. The rows no longer collide
+    // either: the size-6 value cell (BY+46..+94) used to run 2 px into the hint row at
+    // BY+92, so the hints moved to BY+94.
+    char portStr[10];
+    snprintf(portStr, sizeof(portStr), "PORT %u", _labelPickPort + 1);
+    _gfx->setTextSize(3);
+    _gfx->setTextColor(C_WARN);
+    _gfx->setCursor(BX + 12, BY + 8);
+    _gfx->print(portStr);
+
     _gfx->setTextSize(2);
     _gfx->setTextColor(C_ACCENT);
-    _gfx->setCursor(BX + 12, BY + 10);
+    _gfx->setCursor(BX + 136, BY + 12);
     _gfx->print("WHICH PACK?");
 
-    // Why we are asking, when the registry could not tell the packs apart
+    // Why we are asking. The port is in the heading now, so this line carries only the
+    // reason — which is also what made room for the heading.
+    _gfx->setTextSize(1);
+    _gfx->setCursor(BX + 12, BY + 36);
     if (packRec[_labelPickPort].ambiguous) {
-        _gfx->setTextSize(1);
         _gfx->setTextColor(C_WARN);
-        _gfx->setCursor(BX + 12, BY + 32);
-        char why[44];
-        snprintf(why, sizeof(why), "Port %u - cycles too close to tell apart",
-                 _labelPickPort + 1);
-        _gfx->print(why);
+        _gfx->print("cycles too close to tell these packs apart");
     } else {
-        _gfx->setTextSize(1);
         _gfx->setTextColor(C_DIM);
-        _gfx->setCursor(BX + 12, BY + 32);
-        char why[40];
-        snprintf(why, sizeof(why), "Port %u - set the pack number", _labelPickPort + 1);
-        _gfx->print(why);
+        _gfx->print("set the number written on the pack");
     }
 
     // The value, big
@@ -223,11 +243,11 @@ static void drawLabelPicker() {
     // Button hints — size 2, one word each so they fit
     _gfx->setTextSize(2);
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(BX + 12,  BY + 92);  _gfx->print("1:next");
+    _gfx->setCursor(BX + 12,  BY + 94);  _gfx->print("1:next");
     _gfx->setTextColor(C_GOOD);
-    _gfx->setCursor(BX + 112, BY + 92);  _gfx->print("2:SAVE");
+    _gfx->setCursor(BX + 112, BY + 94);  _gfx->print("2:SAVE");
     _gfx->setTextColor(C_DIM);
-    _gfx->setCursor(BX + 204, BY + 92);  _gfx->print("3:exit");
+    _gfx->setCursor(BX + 204, BY + 94);  _gfx->print("3:exit");
 }
 
 // ── Overlay: the SELECTION CONFIRMED flash ───────────────────────────────────
@@ -295,13 +315,23 @@ static void drawHeader() {
     _gfx->setCursor(2, 4);
     _gfx->print("OKAI BMS");
 
-    LogMode lm = logCurrentMode();
-    const char *modeTag = (lm == LOG_RIDE) ? " RDE" : (lm == LOG_CHARGE) ? " CHG" : "";
-    char wstr[14];
-    snprintf(wstr, sizeof(wstr), "%s%s", wifiActive ? "W:ON" : "W:OFF", modeTag);
+    // 2026-10-11 - OWNER'S CALL, approved before the change was written. This slot printed
+    // "W:ON"/"W:OFF" plus a " RDE"/" CHG" logging-mode tag. Both predate the link dot
+    // (09d2822, 6bed994) and he asked for neither of them:
+    //   "i just cared about havign the Wifi in green if on, no need to put the silly
+    //    work ON there"   and   "remove the stupic CHR for charge ... now it is cluttered".
+    //
+    // The DOT below now carries the entire WiFi state and the letters stay neutral grey.
+    // He picked neutral over keeping the text green, and the reason is sound: green letters
+    // sitting beside a RED dot contradict each other, which is exactly the ambiguity the dot
+    // was added to remove. One indicator, one meaning.
+    //
+    // Logging mode is NOT lost — it stays in the CSV filename, /packs and the dashboard. It
+    // is only off the header. logCurrentMode() is no longer called here at all.
+    static const char kWifiLabel[] = "WiFi";
     _gfx->setCursor(70, 4);
-    _gfx->setTextColor(wifiActive ? C_GOOD : C_DIM);
-    _gfx->print(wstr);
+    _gfx->setTextColor(C_DIM);
+    _gfx->print(kWifiLabel);
 
     // 2026-10-09 - LINK DOT, the owner's ask and a good one: "I know at a glance what is
     // going on with my boogie's Wi-Fi."
@@ -311,10 +341,13 @@ static void drawHeader() {
     //   RED   = the radio is ON but nothing is connected. That is the state worth seeing,
     //           because it looks identical to "connected" on every other indicator.
     //   none  = radio off. A dot would imply the radio is doing something.
-    // Drawn, not printed, so it reads at arm's length where a character would not. Placed
-    // from the measured end of the text so it cannot collide if the mode tag appears.
+    // Drawn, not printed, so it reads at arm's length where a character would not. The label
+    // is now a fixed 4 glyphs, so this is a compile-time constant instead of a strlen() of a
+    // formatted buffer: 70 + 4*6 + 7 = 101, rightmost pixel 104, clear of the battery icon
+    // at x=132. The old form measured a string that could carry the mode tag; that string no
+    // longer exists, and with it the last piece of cursor arithmetic in this slot.
     if (wifiActive) {
-        const int16_t dotX = 70 + (int16_t)strlen(wstr) * 6 + 7;   // size-1 glyphs are 6 px
+        const int16_t dotX = 70 + (int16_t)(sizeof(kWifiLabel) - 1) * 6 + 7;  // 6 px glyphs
         _gfx->fillCircle(dotX, 7, 3, wifiLinkUp() ? C_GOOD : C_POOR);
     }
 
@@ -766,7 +799,7 @@ static void drawScreenDetail() {
 
     // P# + pack selector dots (size1 — navigation chrome)
     _gfx->setTextSize(1);
-    _gfx->setTextColor(C_TEXT);
+    _gfx->setTextColor(packLabelColor(i, C_TEXT));   // amber when this pack has no number
     _gfx->setCursor(4, 22);
     char plabel[10]; portPackStr(i, plabel, sizeof(plabel));
     _gfx->print(plabel);
@@ -922,7 +955,7 @@ static void drawScreenRideEnergy() {
             _gfx->print(row);
             continue;
         }
-        _gfx->setTextColor(C_TEXT);
+        _gfx->setTextColor(packLabelColor(i, C_TEXT));   // amber when this pack has no number
         // 2026-10-09 - show the PACK NUMBER beside the port: "P3-6 87% 401Wh". The owner's
         // point, and it is right: the port is the socket, the number in white marker is the
         // battery, and only the second one is useful while holding one.
@@ -1301,13 +1334,21 @@ void displayLoop() {
     // identify. On a marginal connector that is a near-continuous train of 15 s overlays
     // covering Home and eating every button: a self-raising overlay, which is exactly
     // what the disconnect modal was deleted for being.
-    for (uint8_t i = 0; i < NUM_PACKS; i++) {
-        if (!packs[i].valid) { _ambiguousAsked[i] = false; continue; }   // re-arm only on a real re-seat
-        if (packRec[i].ambiguous && !_ambiguousAsked[i] && !_showLabelPick) {
-            _ambiguousAsked[i] = true;
-            openLabelPicker(i, now);
-        }
-    }
+    // 2026-10-11 - DELETED, the owner's call: "for the picker that appears at boot its
+    // annoying". The loop that stood here opened the picker unprompted whenever the registry
+    // could not tell two stored packs apart. Defensible in principle — guessing files a weak
+    // pack's decline against a healthy one — but in practice it covered Home at every boot
+    // with a prompt he had not asked for, and Home is the one screen he wants.
+    //
+    // THE STATE IS NOT HIDDEN BY REMOVING THE PROMPT, which is the only reason this is safe
+    // to delete. An unidentified or ambiguous pack reads "P3 - ?" in AMBER wherever its
+    // label is drawn (packLabelColor, above), the serial log still prints
+    // "[REG] portN AMBIGUOUS", and /packs lists it. He opens the picker when he chooses:
+    // screen 1, BTN1 to the pack, hold BTN3.
+    //
+    // With this gone, NOTHING on this device raises an overlay without a button press —
+    // the same property the disconnect modal was deleted to get. _ambiguousAsked[] and the
+    // .valid-rising-edge re-arm it needed are retired with it.
 
     // ── Overlay: label picker
     if (_showLabelPick) {
