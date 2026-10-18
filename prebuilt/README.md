@@ -8,20 +8,32 @@ Built on the Windows bench with `arduino-cli`, `esp32:esp32@3.3.8`, FQBN
 `esp32:esp32:lilygo_t_display_s3`, board-default partition scheme `app3M_fat9M_16MB`.
 See [SOP-012] for the Windows bench and [SOP-037] for the Linux one.
 
-## `0.3.0-6d9bb7d/`
+## Which set to flash
 
-| File | Offset | Size | What |
-|---|---|---|---|
-| `okai.bootloader.bin` | `0x0` | 20 KB | second-stage bootloader |
-| `okai.partitions.bin` | `0x8000` | 4 KB | partition table |
-| `boot_app0.bin` | `0xe000` | 8 KB | otadata — points the bootloader at `app0`. From the core, **not** the sketch build, so a machine without the core installed has no other copy |
-| `okai.app.bin` | `0x10000` | 1.1 MB | the firmware (1,138,087 bytes, 36 % of the 3 MB app slot) |
+**Current: `0.3.7-754f452/`.** Each set carries its own `FLASH.md` with that version's
+delta, sizes and hashes, and its own `SHA256SUMS.txt`. **Read the set's own `FLASH.md`,
+not this file, for whether the write is app-only or all four images** — that distinction
+is what protects the logs.
 
-`SHA256SUMS.txt` is in the directory. Verify before flashing.
+| Set | Commit | State |
+|---|---|---|
+| **`0.3.7-754f452/`** | `754f452` | **CURRENT — on the chip, verified 2026-10-11.** App-only write at `0x10000` |
+| `0.3.6-d43d4e2/` | `d43d4e2` | superseded the same day. Kept as history |
+| `0.3.4-e477773/` | `e477773` | **last full four-image set actually written to the chip.** Keep it: if the bootloader or partition table ever needs restoring, these bytes are known to match the device |
+| `0.3.0-6d9bb7d/` | `6d9bb7d` | historical. App 1,138,087 B. "Close the audit's flash gate: tight-match seeding, one-record-one-port, session cap" |
 
-Source commit: **`6d9bb7d`** — "Close the audit's flash gate: tight-match seeding,
-one-record-one-port, session cap". The working tree was clean and the binaries are newer than every
-source file, so they are that commit exactly.
+0.3.5 was never cut as an image set — it shipped as an app-only write from the build tree.
+
+Every set holds the same four files:
+
+| File | Offset | What |
+|---|---|---|
+| `okai.bootloader.bin` | `0x0` | second-stage bootloader |
+| `okai.partitions.bin` | `0x8000` | partition table |
+| `boot_app0.bin` | `0xe000` | otadata — points the bootloader at `app0`. From the core, **not** the sketch build, so a machine without the core installed has no other copy |
+| `okai.app.bin` | `0x10000` | the firmware |
+
+`sha256sum -c SHA256SUMS.txt` inside the directory before writing.
 
 ## Flash it
 
@@ -81,20 +93,21 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
    highest write ends around `0x12B000`.
 4. **Keep the partition scheme identical.** A different scheme moves `ffat` and loses the logs.
 
-## What to capture on the first boot after this flash
-
-The one-shot label seed fires once, on this boot only, and prints the binding this project has
-wanted since July:
+## What to capture on the first boot after a flash
 
 ```
-[SEED] port1 CYC-0037 = #1 (owner's printed label)
-[SEED] port2 CYC-XXXX = #4 (owner's printed label)
-[SEED] port3 CYC-XXXX = #6 (owner's printed label)
+Okai BMS Display ready — <version>     ← confirms what actually landed
+[DIAG] ... maxgap=1000ms ...           ← SOP-038. Anything near 5000 and stop
+[LOG] LittleFS ready <used> / <total>  ← no `FS!` tag in the header
+[WiFi] joined "<ssid>" IP=... RSSI=...  ← stored networks survived the write
+[REG] ...                              ← which pack each port was identified as
 ```
 
-**Save that output and paste it into `docs/Pack_Registry.md`.** If a port instead prints
-*"match too loose to label"*, that is the audit's gate 4 refusing to guess — not a failure. Use the
-on-screen picker for that pack.
+> **The one-shot label seed is disarmed** — `LABEL_SEED_LIST { 0, 0, 0, 0 }` in
+> `Config.h`. Older copies of this file told you to capture `[SEED]` lines on the first
+> boot; there are none, and there have not been since the seed was zeroed. Pack numbering
+> is done by hand now: `okai.local` → `/packs` (no buttons needed), or the on-screen
+> picker via **hold BTN3 0.8 s** on the detail screen.
 
 [SOP-012]: ../../myPKA-BREMOTE/Team%20Knowledge/SOPs/SOP-012-arduino-cli-compile-flash.md
 [SOP-037]: ../../myPKA-BREMOTE/Team%20Knowledge/SOPs/SOP-037-linux-mint-terminal-bench.md

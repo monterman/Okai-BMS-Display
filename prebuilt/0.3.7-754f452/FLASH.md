@@ -2,12 +2,16 @@
 
 Built 2026-10-11, arduino-cli, `esp32:esp32@3.3.8`, FQBN
 `esp32:esp32:lilygo_t_display_s3`, **board-default partitions (no `PartitionScheme`
-override — never `huge_app`)**. App **1,289,808 B (40%)** · RAM **69,504 B (21%)**.
+override — never `huge_app`)**. App **1,290,064 B (41%)** · RAM **69,504 B (21%)**
+(`.dram0.data` 23,240 + `.dram0.bss` 46,264, read off the ELF).
 
-**NOT YET FLASHED.** The board currently runs **0.3.5**, which is working. 0.3.7 was
-built and string-verified but the flash was blocked by the host: COM4 enumerates but
-refuses to open (`device attached to the system is not functioning`) after repeated
-DTR/RTS cycling from serial captures. **Replug the USB or reboot the PC, then flash.**
+**✅ FLASHED AND VERIFIED 2026-10-11** on `a0:f2:62:e1:e9:ec`, app-only at `0x10000`.
+The board read back `Okai BMS Display ready — 0.3.7`, `maxgap=1000ms`, LittleFS mounted,
+and all three stored networks survived (`monterAC` joined, IP 192.168.1.53). Earlier in
+the same session COM4 wedged (`device attached to the system is not functioning`) after
+repeated DTR/RTS cycling from serial captures; **nothing was written on those two
+attempts** and replugging the USB cleared it. If it happens again, replug — do not retry
+into a port that will not open.
 
 ## 🔴 Two ways to destroy the logs. Neither is recoverable.
 
@@ -20,7 +24,7 @@ Either wipes `ffat` at `0x610000` (every CSV log, the `/packs` registry, the sav
 ## ⭐ This is an APP-ONLY flash
 
 Bootloader (`b68c1ed3`) and partition table (`ace02503`) are **byte-identical to what is
-already on the chip** — verified before the 0.3.5 write. Per SOP-012, app differs + table
+already on the chip** — verified before the 0.3.7 write. Per SOP-012, app differs + table
 matches means the write is safe and **cannot touch `nvs` or `ffat`**. One file, one offset:
 
 ```powershell
@@ -44,21 +48,35 @@ are `0x0` / `0x8000` / `0xe000`.
 | `okai.bootloader.bin` | `0x0` | 19,984 B | `b68c1ed3` |
 | `okai.partitions.bin` | `0x8000` | 3,072 B | `ace02503` |
 | `boot_app0.bin` | `0xe000` | 8,192 B | `f94c5d78` |
-| `okai.app.bin` | `0x10000` | 1,289,808 B | `fb66142e` |
+| `okai.app.bin` | `0x10000` | 1,290,064 B | `33a6ee62` |
 
 `sha256sum -c SHA256SUMS.txt` before writing.
 
-## What is new since 0.3.5
+## What is new since 0.3.6
 
-- **Picker heading shows `PORT n` at size 3.** It was `setTextSize(1)` — a 6×8 font, the
-  smallest text on an overlay whose whole job is tying the pack in your hand to a socket
-  on the buggy. The question is size 2 beside it, the number stays size 6.
-- **The picker no longer opens by itself.** The ambiguity prompt that covered Home at
-  every boot is deleted. Nothing on the device now raises an overlay without a button.
-- **Amber `P3 - ?`** wherever a pack's label is drawn on Home and the detail screen, when
-  that pack has no number or the registry cannot tell which stored pack it is. This is
-  what replaces the prompt — the state is still visible, just not in your way.
-- Hint row moved 2 px down; the size-6 value cell used to overlap it.
+Three of the owner's five gripes about 0.3.6. The other two are open — see
+`docs/OPEN-2026-10-11-owner-gripes.md` items 4 and 5.
+
+- **`WiFi` letters back to state colour** (`wifiActive ? C_GOOD : C_DIM`). 0.3.5 drew
+  them `C_DIM` unconditionally, so grey letters sat beside a green dot and asserted
+  off-and-connected at the same time. The rule, his: **grey = radio off, green = radio
+  on**; the dot carries the link on top — green = joined a network or an AP client is
+  attached, red = radio on and nothing connected, absent = radio off.
+- **The pack number now renders on the charging screen.** `drawScreenCharging()` built
+  its own label with a bare `snprintf(pl, …, "P%u  ---", i+1)` instead of calling
+  `portPackStr()`, so a pack that was talking but had no charger on that port printed a
+  bare `P1`. Now `portPackStr()` + `packLabelColor()`, and the buffer went **10 → 16 B**
+  because `"P4 - 8" + "  ---" + NUL` is 12 and the old size would have truncated the very
+  thing the fix exists to show.
+- **Deep-sleep pad latch released at boot.** `doSleep()` calls
+  `gpio_deep_sleep_hold_en()`, which latches **every** pad, and `setup()` released only
+  `POWER_EN`. After a wake the buttons stayed electrically frozen at their sleep-time
+  level and an internal pull-up cannot fight a hold latch. Now
+  `gpio_deep_sleep_hold_dis()` + `gpio_hold_dis()` on all three buttons.
+  ⚠️ **Placed AFTER `pinMode(POWER_EN, OUTPUT)` + `digitalWrite(HIGH)` on purpose** —
+  drop the global hold while `POWER_EN` is undriven and the board cuts its own LiPo rail.
+- **BTN diagnostics**: `[BTN] raw b1=… b2=… b3=… stk=… rst=…` every 3 s, which is what
+  settled the BTN2 question below.
 
 ## How to use the picker (it is per-port, by design)
 
@@ -90,9 +108,16 @@ wake. **Serial alone is not proof.** Fallback: `Source/KeepAliveDumb/KeepAliveDu
   sits in internal DRAM. `lilygo_t_display_s3.build.defines=` is empty in `boards.txt`, so
   `-DBOARD_HAS_PSRAM` is never defined — first place to look. Needs its own pass.
 - `BTN2!` red in the header = GPIO14 read low for 15 s and its presses are being ignored.
-  Seen 2026-10-10 on two boots, **cleared after a restart**. Red text in that slot always
-  means a fault; a restart is a reasonable first move. `FS!` is the other one, and that one
-  means nothing is being logged — stop if you see it.
+  **2026-10-11, settled by the new `[BTN]` dump: this one is HARDWARE.** First boot after
+  flashing printed `raw b1=1 b2=0 b3=1  stk=010  rst=11` — pin 14 low at the pad from
+  boot while BTN1 and BTN3 read HIGH through the *identical* `INPUT_PULLUP` block and the
+  same sampling function, and `rst=11` is `ESP_RST_USB`, not a sleep wake, so the pad
+  latch fixed in this build is not the cause. Probe steps are in
+  `docs/OPEN-2026-10-11-owner-gripes.md` § 2; a tact switch can fail closed with nothing
+  visible. Cost until fixed: BTN2 is next-screen and SAVE, so walk the screens backwards
+  with BTN3 and do pack numbering on `okai.local` → `/packs`, which needs no buttons.
+  `FS!` is the other red tag, and that one means nothing is being logged — stop if you
+  see it.
 - A WiFi join blocks the loop up to ~14 s, freezing the screen and pack reads. **Owner
   accepted this explicitly.** It cannot stall the keep-alive — separate core, higher
   priority, proven across a 9 s block on the bench.

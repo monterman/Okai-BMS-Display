@@ -4,9 +4,12 @@ Built 2026-10-09, arduino-cli, `esp32:esp32@3.3.8`, FQBN
 `esp32:esp32:lilygo_t_display_s3`, **board-default partitions (no `PartitionScheme`
 override — never `huge_app`)**. App **1,289,840 B (40%)** · RAM **69,512 B (21%)**.
 
-**BENCH FLASH: GO.** Seven audit rounds behind this build. Supersedes `0.3.3-0ec21e1`,
-which is the version currently on the board — that folder is deleted so there is only ever
-one current set.
+**⚠️ SUPERSEDED — do not flash this set. Use `prebuilt/0.3.7-754f452/`.**
+Kept on the owner's say, not by accident: this is the **last full four-image set** that
+was actually written to the chip (2026-10-11, all four offsets, superseding
+`0.3.3-0ec21e1`). Every write after it has been app-only at `0x10000`, so if the
+bootloader or partition table ever needs restoring, these are the bytes that are known
+to match the device. Seven audit rounds behind the build.
 
 ## 🔴 Two ways to destroy the logs. Neither is recoverable.
 

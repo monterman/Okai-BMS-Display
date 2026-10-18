@@ -4,10 +4,14 @@ Built 2026-10-11, arduino-cli, `esp32:esp32@3.3.8`, FQBN
 `esp32:esp32:lilygo_t_display_s3`, **board-default partitions (no `PartitionScheme`
 override — never `huge_app`)**. App **1,289,808 B (40%)** · RAM **69,504 B (21%)**.
 
-**NOT YET FLASHED.** The board currently runs **0.3.5**, which is working. 0.3.6 was
-built and string-verified but the flash was blocked by the host: COM4 enumerates but
-refuses to open (`device attached to the system is not functioning`) after repeated
-DTR/RTS cycling from serial captures. **Replug the USB or reboot the PC, then flash.**
+**⚠️ SUPERSEDED — do not flash this set. Use `prebuilt/0.3.7-754f452/`.**
+History, for the record: 0.3.6 *was* flashed and verified on 2026-10-11 after the
+COM4 wedge below cleared, and **0.3.7 then replaced it the same day**. The "not yet
+flashed / board runs 0.3.5" line that used to sit here was written before the write
+happened and was never corrected; it is wrong and this is the correction.
+The host fault it described was real: COM4 enumerated but refused to open
+(`device attached to the system is not functioning`) after repeated DTR/RTS cycling from
+serial captures. Replugging the USB cleared it.
 
 ## 🔴 Two ways to destroy the logs. Neither is recoverable.
 
