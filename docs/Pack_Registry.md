@@ -84,7 +84,7 @@ since July. The locked *identity* (#1 is the pack that read CYC-37 in July) stan
   marginal BMS, or an uncharged pack sleeping more readily. Re-compare only with all ports charging.
   **Do not read a zero-current pack as a fault in single/dual-charger sessions.**
 
-Full capture: `docs/bench-logs/2026-10-05-first-boot-6d9bb7d.log`.
+Full capture: `logs/Bench/2026/10/2026-10-05-first-boot-6d9bb7d.log` (local, gitignored; indexed in `docs/LOG_INDEX.md`; commit `8da5ba4` holds the original).
 
 ### 🔴 2026-10-06 — owner's visual read, and it CONTRADICTS the label the firmware wrote
 
